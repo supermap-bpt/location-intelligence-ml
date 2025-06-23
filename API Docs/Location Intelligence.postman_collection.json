@@ -1,0 +1,71 @@
+{
+	"info": {
+		"_postman_id": "8451c6da-f22d-45f6-86f4-1cf25bd3b3f3",
+		"name": "Location Intelligence",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "42589731"
+	},
+	"item": [
+		{
+			"name": "Health",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "*/*"
+					}
+				],
+				"url": {
+					"raw": "http://127.0.0.1:8000/health",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "8000",
+					"path": [
+						"health"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Predict",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"geometry_grid\": {\n        \"type\": \"Polygon\",\n        \"coordinates\": [[[106.8,-6.2],[106.8,-6.21],[106.81,-6.21],[106.81,-6.2],[106.8,-6.2]]]\n    },\n  \"feature_scores\": {\n    \"population_density\": 3.0,\n    \"poi\": 2.0,\n    \"roads\": 2.0,\n    \"healtcare_nearby\": 2.0,\n    \"far_from_river\": 3.0,\n    \"slope\": 3.0\n  },\n  \"weights\": {\n    \"population_density\": 30,\n    \"poi\": 10,\n    \"roads\": 20,\n    \"healtcare_nearby\": 20,\n    \"far_from_river\": 10,\n    \"slope\": 10\n  }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://127.0.0.1:8000/predict",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "8000",
+					"path": [
+						"predict"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
