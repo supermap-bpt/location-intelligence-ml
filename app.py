@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from geoalchemy2 import Geometry
+from fastapi.middleware.cors import CORSMiddleware
 
 # --- FastAPI App ---
 app = FastAPI()
@@ -264,3 +265,12 @@ def get_kelurahan(kode_kecamatan: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ✅ Tambahkan ini setelah app dibuat
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
