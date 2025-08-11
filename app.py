@@ -202,132 +202,6 @@ async def predict_suitability(request: SuitabilityRequest):
         polygon = shape(request.geometry_grid)
         input_gdf = gpd.GeoDataFrame([{'geometry': polygon}], crs="EPSG:4326")
 
-        # Ambil data dari DB
-        wilayah_siswa_gdf = get_siswa_putus_sekolah_geodataframe()
-        wilayah_kemiskinan_gdf = get_kemiskinan_geodataframe()
-        wilayah_penduduk_gdf = get_kepadatan_penduduk_geodataframe()
-        wilayah_poi_gdf = get_poi_geodataframe()
-
-        # Samakan CRS
-        wilayah_siswa_gdf = wilayah_siswa_gdf.to_crs("EPSG:4326")
-        wilayah_kemiskinan_gdf = wilayah_kemiskinan_gdf.to_crs("EPSG:4326")
-        wilayah_penduduk_gdf = wilayah_penduduk_gdf.to_crs("EPSG:4326")
-        wilayah_poi_gdf = wilayah_poi_gdf.to_crs("EPSG:4326")
-        input_gdf = input_gdf.to_crs("EPSG:4326")
-
-        # Intersect siswa_putus_sekolah
-        wilayah_siswa_gdf['intersection'] = wilayah_siswa_gdf.geometry.intersection(polygon)
-        wilayah_siswa_gdf = wilayah_siswa_gdf[wilayah_siswa_gdf['intersection'].area > 0]
-        nilai_siswa = 0.0
-        if not wilayah_siswa_gdf.empty:
-            wilayah_siswa_gdf['intersection_area'] = wilayah_siswa_gdf['intersection'].area
-            max_idx_siswa = wilayah_siswa_gdf['intersection_area'].idxmax()
-            nilai_siswa = float(wilayah_siswa_gdf.loc[max_idx_siswa, 's_siswaputussekolah'])
-
-        # Intersect kemiskinan
-        wilayah_kemiskinan_gdf['intersection'] = wilayah_kemiskinan_gdf.geometry.intersection(polygon)
-        wilayah_kemiskinan_gdf = wilayah_kemiskinan_gdf[wilayah_kemiskinan_gdf['intersection'].area > 0]
-        nilai_kemiskinan = 0.0
-        if not wilayah_kemiskinan_gdf.empty:
-            wilayah_kemiskinan_gdf['intersection_area'] = wilayah_kemiskinan_gdf['intersection'].area
-            max_idx_kemiskinan = wilayah_kemiskinan_gdf['intersection_area'].idxmax()
-            nilai_kemiskinan = float(wilayah_kemiskinan_gdf.loc[max_idx_kemiskinan, 's_kemiskinan'])
-
-        # Intersect kepadatan_penduduk
-        wilayah_penduduk_gdf['intersection'] = wilayah_penduduk_gdf.geometry.intersection(polygon)
-        wilayah_penduduk_gdf = wilayah_penduduk_gdf[wilayah_penduduk_gdf['intersection'].area > 0]
-        nilai_penduduk = 0.0
-        if not wilayah_penduduk_gdf.empty:
-            wilayah_penduduk_gdf['intersection_area'] = wilayah_penduduk_gdf['intersection'].area
-            max_idx_penduduk = wilayah_penduduk_gdf['intersection_area'].idxmax()
-            nilai_penduduk = float(wilayah_penduduk_gdf.loc[max_idx_penduduk, 's_pddk'])
-
-        # Intersect poi
-        wilayah_poi_gdf['intersection'] = wilayah_poi_gdf.geometry.intersection(polygon)
-        wilayah_poi_gdf = wilayah_poi_gdf[wilayah_poi_gdf['intersection'].area > 0]
-        nilai_poi = 0.0
-        if not wilayah_poi_gdf.empty:
-            wilayah_poi_gdf['intersection_area'] = wilayah_poi_gdf['intersection'].area
-            max_idx_poi = wilayah_poi_gdf['intersection_area'].idxmax()
-            nilai_poi = float(wilayah_poi_gdf.loc[max_idx_poi, 's_poi'])
-        
-        # --- Kedekatan Sungai ---
-        wilayah_sungai_gdf = get_kedekatan_sungai_geodataframe()
-        wilayah_sungai_gdf = wilayah_sungai_gdf.to_crs("EPSG:4326")
-        wilayah_sungai_gdf['intersection'] = wilayah_sungai_gdf.geometry.intersection(polygon)
-        wilayah_sungai_gdf = wilayah_sungai_gdf[wilayah_sungai_gdf['intersection'].area > 0]
-        nilai_sungai = 0  # default jika tidak ada intersection
-        if not wilayah_sungai_gdf.empty:
-            wilayah_sungai_gdf['intersection_area'] = wilayah_sungai_gdf['intersection'].area
-            max_idx_sungai = wilayah_sungai_gdf['intersection_area'].idxmax()
-            nilai_sungai = int(wilayah_sungai_gdf.loc[max_idx_sungai, 's_sungai'])
-        
-        # Ambil data kedekatan faskes
-        wilayah_faskes_gdf = get_kedekatan_faskes_geodataframe()
-        wilayah_faskes_gdf = wilayah_faskes_gdf.to_crs("EPSG:4326")
-        wilayah_faskes_gdf['intersection'] = wilayah_faskes_gdf.geometry.intersection(polygon)
-        wilayah_faskes_gdf = wilayah_faskes_gdf[wilayah_faskes_gdf['intersection'].area > 0]
-
-        nilai_faskes = 0  # default kalau tidak ada intersection
-        if not wilayah_faskes_gdf.empty:
-            wilayah_faskes_gdf['intersection_area'] = wilayah_faskes_gdf['intersection'].area
-            max_idx_faskes = wilayah_faskes_gdf['intersection_area'].idxmax()
-            nilai_faskes = int(wilayah_faskes_gdf.loc[max_idx_faskes, 's_faskes'])
-
-        # Ambil data kedekatan jalan
-        wilayah_jalan_gdf = get_kedekatan_jalan_geodataframe()
-        wilayah_jalan_gdf = wilayah_jalan_gdf.to_crs("EPSG:4326")
-        wilayah_jalan_gdf['intersection'] = wilayah_jalan_gdf.geometry.intersection(polygon)
-        wilayah_jalan_gdf = wilayah_jalan_gdf[wilayah_jalan_gdf['intersection'].area > 0]
-
-        nilai_road = 0  # default kalau tidak ada intersection
-        if not wilayah_jalan_gdf.empty:
-            wilayah_jalan_gdf['intersection_area'] = wilayah_jalan_gdf['intersection'].area
-            max_idx_jalan = wilayah_jalan_gdf['intersection_area'].idxmax()
-            nilai_road = int(wilayah_jalan_gdf.loc[max_idx_jalan, 's_road'])
-
-        # Ambil data slope
-        wilayah_slope_gdf = get_slope_geodataframe()
-        wilayah_slope_gdf = wilayah_slope_gdf.to_crs("EPSG:4326")
-        wilayah_slope_gdf['intersection'] = wilayah_slope_gdf.geometry.intersection(polygon)
-        wilayah_slope_gdf = wilayah_slope_gdf[wilayah_slope_gdf['intersection'].area > 0]
-
-        nilai_slope = 0  # default jika tidak ada intersection
-        if not wilayah_slope_gdf.empty:
-            wilayah_slope_gdf['intersection_area'] = wilayah_slope_gdf['intersection'].area
-            max_idx_slope = wilayah_slope_gdf['intersection_area'].idxmax()
-            nilai_slope = int(wilayah_slope_gdf.loc[max_idx_slope, 's_slope'])
-            
-        # Update feature_scores
-        cleaned_scores = {}
-        for api_key, model_key in feature_map.items():
-            if api_key == "jumlahsiswaputussekolah":
-                cleaned_scores[api_key] = nilai_siswa
-            elif api_key == "kemiskinan":
-                cleaned_scores[api_key] = nilai_kemiskinan
-            elif api_key == "peopleden":
-                cleaned_scores[api_key] = nilai_penduduk
-            elif api_key == "poiarea":  # Asumsi poiarea adalah nilai dari s_poi
-                cleaned_scores[api_key] = nilai_poi
-            elif api_key == "nearest_sungai":
-                cleaned_scores[api_key] = nilai_sungai
-            elif api_key == "nearestfaskes":
-                cleaned_scores[api_key] = nilai_faskes
-            elif api_key == "road":
-                cleaned_scores[api_key] = nilai_road
-            elif api_key == "slope":
-                cleaned_scores[api_key] = nilai_slope
-            else:
-                if api_key not in request.feature_scores:
-                    raise HTTPException(status_code=400, detail=f"Missing feature_scores key: {api_key}")
-                try:
-                    cleaned_scores[api_key] = float(request.feature_scores[api_key])
-                except (ValueError, TypeError) as e:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid value for {api_key}. Must be numeric. Error: {str(e)}"
-                    )
-
         # Clean & validate weights
         total_weight = 0.0
         converted_weights = {}
@@ -349,6 +223,59 @@ async def predict_suitability(request: SuitabilityRequest):
                 detail=f"Weights must sum to 100. Got {total_weight}."
             )
 
+        # Set fitur yang beratnya > 0
+        non_zero_features = {k for k, w in converted_weights.items() if w > 0}
+
+        # Fungsi bantu untuk intersect dan ambil nilai max intersection area
+        def get_intersect_value(gdf_func, polygon, score_col, feature_key):
+            if feature_key not in non_zero_features:
+                return 0
+            gdf = gdf_func()
+            gdf = gdf.to_crs("EPSG:4326")
+            gdf['intersection'] = gdf.geometry.intersection(polygon)
+            gdf = gdf[gdf['intersection'].area > 0]
+            if gdf.empty:
+                return 0
+            gdf['intersection_area'] = gdf['intersection'].area
+            max_idx = gdf['intersection_area'].idxmax()
+            return float(gdf.loc[max_idx, score_col])
+
+        # Ambil nilai tiap fitur dengan intersect hanya jika weight > 0
+        nilai_siswa = get_intersect_value(get_siswa_putus_sekolah_geodataframe, polygon, 's_siswaputussekolah', "jumlahsiswaputussekolah")
+        nilai_kemiskinan = get_intersect_value(get_kemiskinan_geodataframe, polygon, 's_kemiskinan', "kemiskinan")
+        nilai_penduduk = get_intersect_value(get_kepadatan_penduduk_geodataframe, polygon, 's_pddk', "peopleden")
+        nilai_poi = get_intersect_value(get_poi_geodataframe, polygon, 's_poi', "poiarea")
+        nilai_sungai = get_intersect_value(get_kedekatan_sungai_geodataframe, polygon, 's_sungai', "nearest_sungai")
+        nilai_faskes = get_intersect_value(get_kedekatan_faskes_geodataframe, polygon, 's_faskes', "nearestfaskes")
+        nilai_road = get_intersect_value(get_kedekatan_jalan_geodataframe, polygon, 's_road', "road")
+        nilai_slope = get_intersect_value(get_slope_geodataframe, polygon, 's_slope', "slope")
+
+        # Update feature_scores
+        cleaned_scores = {
+            "jumlahsiswaputussekolah": nilai_siswa,
+            "kemiskinan": nilai_kemiskinan,
+            "peopleden": nilai_penduduk,
+            "poiarea": nilai_poi,
+            "nearest_sungai": nilai_sungai,
+            "nearestfaskes": nilai_faskes,
+            "road": nilai_road,
+            "slope": nilai_slope
+        }
+
+        # Jika ada fitur lain di request.feature_scores (misal input manual), cek dan masukkan
+        for api_key in feature_map.keys():
+            if api_key not in cleaned_scores:
+                if api_key not in request.feature_scores:
+                    raise HTTPException(status_code=400, detail=f"Missing feature_scores key: {api_key}")
+                try:
+                    cleaned_scores[api_key] = float(request.feature_scores[api_key])
+                except (ValueError, TypeError) as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid value for {api_key}. Must be numeric. Error: {str(e)}"
+                    )
+
+        # Prepare input untuk model
         model_input = {model_key: cleaned_scores[api_key] for api_key, model_key in feature_map.items()}
         input_df = pd.DataFrame([model_input])
 
