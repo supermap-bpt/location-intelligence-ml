@@ -42,7 +42,7 @@ pip install -r requirements.txt
 project/
 │
 ├── model/
-│   ├── suitability_classifier.pkl
+│   ├── random_forest_model.pkl
 │
 ├── .gitignore
 ├── app.py
@@ -72,22 +72,22 @@ http://127.0.0.1:8000/docs
 ```
 --- Classification Report ---
 
-                 precision    recall  f1-score   support
+Classification Report:
+              precision    recall  f1-score   support
 
-Not Recommended       1.00      0.89      0.94         9
-        Neutral       0.95      0.86      0.90        22
-    Recommended       0.88      1.00      0.94        22
+        high       1.00      0.92      0.96        12
+         low       0.90      0.82      0.86        11
+      medium       0.91      0.97      0.94        30
 
-       accuracy                           0.92        53
-      macro avg       0.94      0.92      0.93        53
-   weighted avg       0.93      0.92      0.92        53
-
+    accuracy                           0.92        53
+   macro avg       0.94      0.90      0.92        53
+weighted avg       0.93      0.92      0.92        53
 
 ```
 
 | Metric          | Value |
 | --------------- | ----- |
 | Accuracy        | 0.92  |
-| Macro F1-score  | 0.93  |
+| Macro F1-score  | 0.92  |
 | Precision (avg) | 0.94  |
 | Recall (avg)    | 0.92  |
