@@ -29,6 +29,11 @@ MODEL_ACCURACY = 0.92
 # --- DB Config ---
 DATABASE_URL = "postgresql://postgres:HansAngela09@localhost:5432/batas_wilayah_indonesia"
 engine = create_engine(DATABASE_URL)
+
+# Engine untuk dummy_bps
+DATABASE_URL_DUMMY_BPS = "postgresql://postgres:HansAngela09@localhost:5432/dummy_bps"
+engine_dummy_bps = create_engine(DATABASE_URL_DUMMY_BPS)
+
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
@@ -100,29 +105,228 @@ def extract_coordinates(geojson: Dict) -> List[List[Tuple[float, float]]]:
         return coords
     raise ValueError("Only Polygon geometry type is supported")
 
+def get_siswa_putus_sekolah_geodataframe():
+    sql = """
+        SELECT wadmkc, s_siswaputussekolah, ST_AsGeoJSON(geometry) as geojson
+        FROM siswa_putus_sekolah
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_kemiskinan_geodataframe():
+    sql = """
+        SELECT wadmkc, s_kemiskinan, ST_AsGeoJSON(geometry) as geojson
+        FROM kemiskinan
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_kepadatan_penduduk_geodataframe():
+    sql = """
+        SELECT wadmkc, s_pddk, ST_AsGeoJSON(geometry) as geojson
+        FROM kepadatan_penduduk
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_poi_geodataframe():
+    sql = """
+        SELECT wadmkc, s_poi, ST_AsGeoJSON(geometry) as geojson
+        FROM poi
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_kedekatan_sungai_geodataframe():
+    sql = """
+        SELECT s_sungai, ST_AsGeoJSON(geometry) as geojson
+        FROM kedekatan_sungai
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)  # atau engine yang sesuai database
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_kedekatan_faskes_geodataframe():
+    sql = """
+        SELECT s_faskes, ST_AsGeoJSON(geometry) as geojson
+        FROM kedekatan_faskes
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_kedekatan_jalan_geodataframe():
+    sql = """
+        SELECT s_road, ST_AsGeoJSON(geometry) as geojson
+        FROM jalan
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)  # sesuaikan engine kalau beda
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
+def get_slope_geodataframe():
+    sql = """
+        SELECT s_slope, ST_AsGeoJSON(geometry) as geojson
+        FROM slope
+        WHERE geometry IS NOT NULL
+    """
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)  # sesuaikan engine kalau beda
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    gdf = gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+    return gdf
+
 # --- Predict Endpoint ---
 @app.post("/predict", response_model=SuitabilityResponse)
 async def predict_suitability(request: SuitabilityRequest):
     try:
-        # Validate and extract geometry
-        coords = extract_coordinates(request.geometry_grid)
         polygon = shape(request.geometry_grid)
-        _ = gpd.GeoDataFrame([{'geometry': polygon}], crs="EPSG:4326").to_crs(epsg=3857)
+        input_gdf = gpd.GeoDataFrame([{'geometry': polygon}], crs="EPSG:4326")
 
-        # Clean & validate features
+        # Ambil data dari DB
+        wilayah_siswa_gdf = get_siswa_putus_sekolah_geodataframe()
+        wilayah_kemiskinan_gdf = get_kemiskinan_geodataframe()
+        wilayah_penduduk_gdf = get_kepadatan_penduduk_geodataframe()
+        wilayah_poi_gdf = get_poi_geodataframe()
+
+        # Samakan CRS
+        wilayah_siswa_gdf = wilayah_siswa_gdf.to_crs("EPSG:4326")
+        wilayah_kemiskinan_gdf = wilayah_kemiskinan_gdf.to_crs("EPSG:4326")
+        wilayah_penduduk_gdf = wilayah_penduduk_gdf.to_crs("EPSG:4326")
+        wilayah_poi_gdf = wilayah_poi_gdf.to_crs("EPSG:4326")
+        input_gdf = input_gdf.to_crs("EPSG:4326")
+
+        # Intersect siswa_putus_sekolah
+        wilayah_siswa_gdf['intersection'] = wilayah_siswa_gdf.geometry.intersection(polygon)
+        wilayah_siswa_gdf = wilayah_siswa_gdf[wilayah_siswa_gdf['intersection'].area > 0]
+        nilai_siswa = 0.0
+        if not wilayah_siswa_gdf.empty:
+            wilayah_siswa_gdf['intersection_area'] = wilayah_siswa_gdf['intersection'].area
+            max_idx_siswa = wilayah_siswa_gdf['intersection_area'].idxmax()
+            nilai_siswa = float(wilayah_siswa_gdf.loc[max_idx_siswa, 's_siswaputussekolah'])
+
+        # Intersect kemiskinan
+        wilayah_kemiskinan_gdf['intersection'] = wilayah_kemiskinan_gdf.geometry.intersection(polygon)
+        wilayah_kemiskinan_gdf = wilayah_kemiskinan_gdf[wilayah_kemiskinan_gdf['intersection'].area > 0]
+        nilai_kemiskinan = 0.0
+        if not wilayah_kemiskinan_gdf.empty:
+            wilayah_kemiskinan_gdf['intersection_area'] = wilayah_kemiskinan_gdf['intersection'].area
+            max_idx_kemiskinan = wilayah_kemiskinan_gdf['intersection_area'].idxmax()
+            nilai_kemiskinan = float(wilayah_kemiskinan_gdf.loc[max_idx_kemiskinan, 's_kemiskinan'])
+
+        # Intersect kepadatan_penduduk
+        wilayah_penduduk_gdf['intersection'] = wilayah_penduduk_gdf.geometry.intersection(polygon)
+        wilayah_penduduk_gdf = wilayah_penduduk_gdf[wilayah_penduduk_gdf['intersection'].area > 0]
+        nilai_penduduk = 0.0
+        if not wilayah_penduduk_gdf.empty:
+            wilayah_penduduk_gdf['intersection_area'] = wilayah_penduduk_gdf['intersection'].area
+            max_idx_penduduk = wilayah_penduduk_gdf['intersection_area'].idxmax()
+            nilai_penduduk = float(wilayah_penduduk_gdf.loc[max_idx_penduduk, 's_pddk'])
+
+        # Intersect poi
+        wilayah_poi_gdf['intersection'] = wilayah_poi_gdf.geometry.intersection(polygon)
+        wilayah_poi_gdf = wilayah_poi_gdf[wilayah_poi_gdf['intersection'].area > 0]
+        nilai_poi = 0.0
+        if not wilayah_poi_gdf.empty:
+            wilayah_poi_gdf['intersection_area'] = wilayah_poi_gdf['intersection'].area
+            max_idx_poi = wilayah_poi_gdf['intersection_area'].idxmax()
+            nilai_poi = float(wilayah_poi_gdf.loc[max_idx_poi, 's_poi'])
+        
+        # --- Kedekatan Sungai ---
+        wilayah_sungai_gdf = get_kedekatan_sungai_geodataframe()
+        wilayah_sungai_gdf = wilayah_sungai_gdf.to_crs("EPSG:4326")
+        wilayah_sungai_gdf['intersection'] = wilayah_sungai_gdf.geometry.intersection(polygon)
+        wilayah_sungai_gdf = wilayah_sungai_gdf[wilayah_sungai_gdf['intersection'].area > 0]
+        nilai_sungai = 0  # default jika tidak ada intersection
+        if not wilayah_sungai_gdf.empty:
+            wilayah_sungai_gdf['intersection_area'] = wilayah_sungai_gdf['intersection'].area
+            max_idx_sungai = wilayah_sungai_gdf['intersection_area'].idxmax()
+            nilai_sungai = int(wilayah_sungai_gdf.loc[max_idx_sungai, 's_sungai'])
+        
+        # Ambil data kedekatan faskes
+        wilayah_faskes_gdf = get_kedekatan_faskes_geodataframe()
+        wilayah_faskes_gdf = wilayah_faskes_gdf.to_crs("EPSG:4326")
+        wilayah_faskes_gdf['intersection'] = wilayah_faskes_gdf.geometry.intersection(polygon)
+        wilayah_faskes_gdf = wilayah_faskes_gdf[wilayah_faskes_gdf['intersection'].area > 0]
+
+        nilai_faskes = 0  # default kalau tidak ada intersection
+        if not wilayah_faskes_gdf.empty:
+            wilayah_faskes_gdf['intersection_area'] = wilayah_faskes_gdf['intersection'].area
+            max_idx_faskes = wilayah_faskes_gdf['intersection_area'].idxmax()
+            nilai_faskes = int(wilayah_faskes_gdf.loc[max_idx_faskes, 's_faskes'])
+
+        # Ambil data kedekatan jalan
+        wilayah_jalan_gdf = get_kedekatan_jalan_geodataframe()
+        wilayah_jalan_gdf = wilayah_jalan_gdf.to_crs("EPSG:4326")
+        wilayah_jalan_gdf['intersection'] = wilayah_jalan_gdf.geometry.intersection(polygon)
+        wilayah_jalan_gdf = wilayah_jalan_gdf[wilayah_jalan_gdf['intersection'].area > 0]
+
+        nilai_road = 0  # default kalau tidak ada intersection
+        if not wilayah_jalan_gdf.empty:
+            wilayah_jalan_gdf['intersection_area'] = wilayah_jalan_gdf['intersection'].area
+            max_idx_jalan = wilayah_jalan_gdf['intersection_area'].idxmax()
+            nilai_road = int(wilayah_jalan_gdf.loc[max_idx_jalan, 's_road'])
+
+        # Ambil data slope
+        wilayah_slope_gdf = get_slope_geodataframe()
+        wilayah_slope_gdf = wilayah_slope_gdf.to_crs("EPSG:4326")
+        wilayah_slope_gdf['intersection'] = wilayah_slope_gdf.geometry.intersection(polygon)
+        wilayah_slope_gdf = wilayah_slope_gdf[wilayah_slope_gdf['intersection'].area > 0]
+
+        nilai_slope = 0  # default jika tidak ada intersection
+        if not wilayah_slope_gdf.empty:
+            wilayah_slope_gdf['intersection_area'] = wilayah_slope_gdf['intersection'].area
+            max_idx_slope = wilayah_slope_gdf['intersection_area'].idxmax()
+            nilai_slope = int(wilayah_slope_gdf.loc[max_idx_slope, 's_slope'])
+            
+        # Update feature_scores
         cleaned_scores = {}
         for api_key, model_key in feature_map.items():
-            if api_key not in request.feature_scores:
-                raise HTTPException(status_code=400, detail=f"Missing feature_scores key: {api_key}")
-            
-            try:
-                # Convert all values to float as your model expects numerical inputs
-                cleaned_scores[api_key] = float(request.feature_scores[api_key])
-            except (ValueError, TypeError) as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid value for {api_key}. Must be numeric. Error: {str(e)}"
-                )
+            if api_key == "jumlahsiswaputussekolah":
+                cleaned_scores[api_key] = nilai_siswa
+            elif api_key == "kemiskinan":
+                cleaned_scores[api_key] = nilai_kemiskinan
+            elif api_key == "peopleden":
+                cleaned_scores[api_key] = nilai_penduduk
+            elif api_key == "poiarea":  # Asumsi poiarea adalah nilai dari s_poi
+                cleaned_scores[api_key] = nilai_poi
+            elif api_key == "nearest_sungai":
+                cleaned_scores[api_key] = nilai_sungai
+            elif api_key == "nearestfaskes":
+                cleaned_scores[api_key] = nilai_faskes
+            elif api_key == "road":
+                cleaned_scores[api_key] = nilai_road
+            elif api_key == "slope":
+                cleaned_scores[api_key] = nilai_slope
+            else:
+                if api_key not in request.feature_scores:
+                    raise HTTPException(status_code=400, detail=f"Missing feature_scores key: {api_key}")
+                try:
+                    cleaned_scores[api_key] = float(request.feature_scores[api_key])
+                except (ValueError, TypeError) as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid value for {api_key}. Must be numeric. Error: {str(e)}"
+                    )
 
         # Clean & validate weights
         total_weight = 0.0
@@ -130,7 +334,6 @@ async def predict_suitability(request: SuitabilityRequest):
         for api_key in feature_map.keys():
             if api_key not in request.weights:
                 raise HTTPException(status_code=400, detail=f"Missing weight key: {api_key}")
-            
             try:
                 weight = float(request.weights[api_key])
                 if weight < 0:
@@ -146,32 +349,14 @@ async def predict_suitability(request: SuitabilityRequest):
                 detail=f"Weights must sum to 100. Got {total_weight}."
             )
 
-        # Prepare model input - using the same column names as in training
-        model_input = {
-            model_key: cleaned_scores[api_key]
-            for api_key, model_key in feature_map.items()
-        }
-
+        model_input = {model_key: cleaned_scores[api_key] for api_key, model_key in feature_map.items()}
         input_df = pd.DataFrame([model_input])
 
-        # Predict
-        try:
-            predicted_class = model.predict(input_df)[0]  # This will return 'low', 'medium', or 'high'
-            predicted_probs = model.predict_proba(input_df)[0]
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Model prediction failed: {str(e)}"
-            )
-
-        # Map the predicted class to our categories
+        predicted_class = model.predict(input_df)[0]
+        predicted_probs = model.predict_proba(input_df)[0]
         category = label_mapping.get(predicted_class, SuitabilityCategory.NEUTRAL)
-        
-        # Get confidence as the probability of the predicted class
         class_index = list(model.classes_).index(predicted_class)
         confidence = float(predicted_probs[class_index])
-        
-        # Normalize weights for response
         norm_weights = {k: round(v / 100.0, 4) for k, v in converted_weights.items()}
 
         return {
@@ -180,7 +365,7 @@ async def predict_suitability(request: SuitabilityRequest):
             "model_accuracy": MODEL_ACCURACY,
             "feature_scores": cleaned_scores,
             "weights_applied": norm_weights,
-            "input_polygon": coords,
+            "input_polygon": extract_coordinates(request.geometry_grid),
             "timestamp": datetime.now().isoformat()
         }
 
