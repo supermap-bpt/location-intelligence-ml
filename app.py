@@ -16,8 +16,11 @@ from fastapi import Query
 app = FastAPI()
 
 # Load model
-model = joblib.load("model/random_forest_model.pkl")
-MODEL_ACCURACY = 0.92
+model = joblib.load("model/random_forest_model_regressor.pkl")
+MEAN_ABSOLUTE_ERROR = 0.0412
+MEAN_SQUARED_ERROR = 0.0031
+ROOT_MEAN_SQUARED_ERROR = 0.0560
+R2_SCORE = 0.8643
 
 # Database configuration
 DATABASE_URL = "postgresql://postgres:HansAngela09@localhost:5432/dummy_batas_wilayah"
@@ -45,7 +48,10 @@ class BatchSuitabilityRequest(BaseModel):
 class SuitabilityResponse(BaseModel):
     predicted_class: SuitabilityCategory
     confidence: float
-    model_accuracy: float
+    mean_absolute_error: float
+    mean_squared_error: float
+    root_mean_squared_error: float
+    r2_score: float
     feature_scores: Dict[str, float]
     weights_applied: Dict[str, float]
     input_polygon: List[List[Tuple[float, float]]]
@@ -234,7 +240,10 @@ async def batch_predict_suitability(request: BatchSuitabilityRequest):
                 result = {
                     "predicted_class": category,
                     "confidence": confidence,
-                    "model_accuracy": MODEL_ACCURACY,
+                    "mean_absolute_error": MEAN_ABSOLUTE_ERROR,
+                    "mean_squared_error": MEAN_SQUARED_ERROR,
+                    "root_mean_squared_error": ROOT_MEAN_SQUARED_ERROR,
+                    "r2_score": R2_SCORE,
                     "feature_scores": cleaned_scores,
                     "weights_applied": norm_weights,
                     "input_polygon": extract_coordinates(grid),
@@ -257,6 +266,67 @@ async def batch_predict_suitability(request: BatchSuitabilityRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.post("/predict", response_model=SuitabilityResponse)
+async def predict_suitability(request: SuitabilityRequest):
+    try:
+        coords = extract_coordinates(request.geometry_grid)
+        polygon = shape(request.geometry_grid)
+        _ = gpd.GeoDataFrame([{'geometry': polygon}], crs="EPSG:4326").to_crs(epsg=3857)
+
+        # Ensure all weights are float and sum to 100
+        weights = {}
+        total_weight = 0.0
+        for k in feature_map.keys():
+            if k not in request.weights:
+                raise HTTPException(status_code=400, detail=f"Missing weight key: {k}")
+            try:
+                w = float(request.weights[k])
+                if w < 0:
+                    raise ValueError(f"Weight for {k} must be non-negative")
+                weights[k] = w
+                total_weight += w
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        if not np.isclose(total_weight, 100.0, atol=1e-6):
+            raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
+
+        # Prepare model input
+        model_input = {model_key: float(request.feature_scores[api_key]) for api_key, model_key in feature_map.items()}
+        input_df = pd.DataFrame([model_input])
+
+        # Predict with regressor
+        reg_value = float(model.predict(input_df)[0])
+
+        # Weighted value (between 0 and 1)
+        norm_weights = {k: v / 100.0 for k, v in weights.items()}
+        weighted_sum = sum(float(request.feature_scores[k]) * norm_weights[k] for k in feature_map.keys())
+        # Optionally, combine reg_value and weighted_sum, or just use reg_value
+        final_value = max(0.0, min(1.0, reg_value))  # Clamp between 0 and 1
+
+        # Classify into 3 classes
+        if final_value < 0.33:
+            predicted_class = SuitabilityCategory.NOT_RECOMMENDED
+        elif final_value < 0.66:
+            predicted_class = SuitabilityCategory.NEUTRAL
+        else:
+            predicted_class = SuitabilityCategory.RECOMMENDED
+
+        return {
+            "predicted_class": predicted_class,
+            "confidence": round(final_value, 1),
+            "mean_absolute_error": MEAN_ABSOLUTE_ERROR,
+            "mean_squared_error": MEAN_SQUARED_ERROR,
+            "root_mean_squared_error": ROOT_MEAN_SQUARED_ERROR,
+            "r2_score": R2_SCORE,
+            "feature_scores": {k: float(request.feature_scores[k]) for k in feature_map.keys()},
+            "weights_applied": norm_weights,
+            "input_polygon": coords,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # --- Health Check ---
 @app.get("/health", response_model=HealthCheckResponse)
