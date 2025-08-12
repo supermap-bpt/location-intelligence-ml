@@ -397,22 +397,30 @@ def get_kelurahan(kode_kecamatan: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-hotel", response_model=List[HotelItem])
-def get_hotel(nmkec: str = Query(..., description="Nama kecamatan")):
+def get_hotel(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple, dipisah koma)")):
     try:
+        # Pisahkan kecamatan berdasarkan koma, hilangkan spasi
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+
+        if not kecamatan_list:
+            raise HTTPException(
+                status_code=400,
+                detail="Minimal satu nama kecamatan harus disediakan"
+            )
+
         query = text("""
             SELECT nama, smgeometry
             FROM "Hotel_P"
-            WHERE nmkec = :nmkec
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
         """)
 
         with engine_dummy_bps.connect() as conn:
-            results = conn.execute(query, {"nmkec": nmkec}).fetchall()
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
 
-        hotels = []
+        hotels_list = []
         for nama, geom_wkb in results:
             geom_geojson = None
             if geom_wkb:
-                # Handle tipe data yang mungkin keluar dari database
                 if isinstance(geom_wkb, memoryview):
                     geom_bytes = geom_wkb.tobytes()
                 elif isinstance(geom_wkb, str):
@@ -421,32 +429,35 @@ def get_hotel(nmkec: str = Query(..., description="Nama kecamatan")):
                     geom_bytes = geom_wkb
                 else:
                     raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
-
-                # Konversi WKB → shapely geometry → GeoJSON dict
                 shapely_geom = wkb.loads(geom_bytes)
                 geom_geojson = mapping(shapely_geom)
 
-            hotels.append({
+            hotels_list.append({
                 "nama": nama,
                 "geometry": geom_geojson
             })
 
-        return hotels
+        return hotels_list
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-pendidikan", response_model=List[PendidikanItem])
-def get_pendidikan(nmkec: str = Query(..., description="Nama kecamatan")):
+def get_pendidikan(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple, dipisah koma)")):
     try:
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+
+        if not kecamatan_list:
+            raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
+
         query = text("""
             SELECT namobj, smgeometry
             FROM "Pendidikan_P"
-            WHERE nmkec = :nmkec
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
         """)
 
         with engine_dummy_bps.connect() as conn:
-            results = conn.execute(query, {"nmkec": nmkec}).fetchall()
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
 
         pendidikan_list = []
         for namobj, geom_wkb in results:
@@ -460,7 +471,6 @@ def get_pendidikan(nmkec: str = Query(..., description="Nama kecamatan")):
                     geom_bytes = geom_wkb
                 else:
                     raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
-
                 shapely_geom = wkb.loads(geom_bytes)
                 geom_geojson = mapping(shapely_geom)
 
@@ -475,29 +485,27 @@ def get_pendidikan(nmkec: str = Query(..., description="Nama kecamatan")):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-pusatperbelanjaan", response_model=List[PusatPerbelanjaanItem])
-def get_pusatperbelanjaan(nmkec: str = Query(..., description="Nama kecamatan")):
-    """
-    Ambil daftar pusat perbelanjaan berdasarkan nama kecamatan (nmkec) beserta geometry dalam GeoJSON.
-    """
+def get_pusatperbelanjaan(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple, dipisah koma)")):
     try:
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+
+        if not kecamatan_list:
+            raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
+
         query = text("""
             SELECT namobj, smgeometry
             FROM "PusatPerbelanjaan_P"
-            WHERE nmkec = :nmkec
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
         """)
 
         with engine_dummy_bps.connect() as conn:
-            results = conn.execute(query, {"nmkec": nmkec}).fetchall()
-
-        # 🔹 Kalau data kosong → kirim pesan
-        if not results:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Tidak ada pusat perbelanjaan pada kecamatan '{nmkec}'"
-            )
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
 
         pusatperbelanjaan_list = []
         for namobj, geom_wkb in results:
+            if namobj is None:
+                continue  # skip kalau nama objek kosong
+
             geom_geojson = None
             if geom_wkb:
                 if isinstance(geom_wkb, memoryview):
@@ -508,7 +516,6 @@ def get_pusatperbelanjaan(nmkec: str = Query(..., description="Nama kecamatan"))
                     geom_bytes = geom_wkb
                 else:
                     raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
-
                 shapely_geom = wkb.loads(geom_bytes)
                 geom_geojson = mapping(shapely_geom)
 
@@ -519,25 +526,33 @@ def get_pusatperbelanjaan(nmkec: str = Query(..., description="Nama kecamatan"))
 
         return pusatperbelanjaan_list
 
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-rumahsakit", response_model=List[RumahSakitItem])
-def get_rumahsakit(nmkec: str = Query(..., description="Nama kecamatan")):
+def get_rumahsakit(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple dipisah koma)")):
     """
-    Ambil daftar rumah sakit berdasarkan nama kecamatan (nmkec) beserta geometry dalam GeoJSON.
+    Ambil daftar rumah sakit berdasarkan nama kecamatan (bisa multiple)
     """
     try:
+        # Split multiple kecamatan names
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+        
+        if not kecamatan_list:
+            raise HTTPException(
+                status_code=400,
+                detail="Minimal satu nama kecamatan harus disediakan"
+            )
+
+        # Build query with IN clause
         query = text("""
             SELECT namobj, smgeometry
             FROM "RumahSakit_P"
-            WHERE nmkec = :nmkec
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
         """)
 
         with engine_dummy_bps.connect() as conn:
-            results = conn.execute(query, {"nmkec": nmkec}).fetchall()
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
 
         rumah_sakit_list = []
         for namobj, geom_wkb in results:
