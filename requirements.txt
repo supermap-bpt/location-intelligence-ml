@@ -1,9 +1,14 @@
 fastapi
+uvicorn[standard]
 pydantic
 joblib
 shapely
 geopandas
 pandas
 numpy
-uvicorn
 scikit-learn
+sqlalchemy
+psycopg2
+python-multipart
+requests
+python-dotenv
