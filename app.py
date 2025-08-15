@@ -12,6 +12,7 @@ import joblib
 from sqlalchemy import create_engine, text
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Query
+import json
 
 app = FastAPI()
 
@@ -23,7 +24,7 @@ ROOT_MEAN_SQUARED_ERROR = 0.0560
 R2_SCORE = 0.8643
 
 # Database configuration
-DATABASE_URL = "postgresql://postgres:12345678@localhost:5432/dummy_batas_wilayah"
+DATABASE_URL = "postgresql://postgres:12345678@localhost:5432/batas_wilayah"
 DATABASE_URL_DUMMY_BPS = "postgresql://postgres:12345678@localhost:5432/dummy_parameter_bps"
 engine = create_engine(DATABASE_URL)
 engine_dummy_bps = create_engine(DATABASE_URL_DUMMY_BPS)
@@ -319,16 +320,25 @@ async def health_check():
 @app.get("/provinsi")
 def get_provinsi():
     try:
+        # Ambil geom + latitude & longitude dari PostGIS
         df = pd.read_sql_query(
-            "SELECT kode_provinsi, nama_provinsi, latitude, longitude, rings FROM dataset_wilayah_indonesia.provinsi",
+            """
+            SELECT
+                kode_provinsi,
+                nama_provinsi,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM provinsi
+            """,
             con=engine
         )
 
         result = []
         for _, row in df.iterrows():
-            # Asumsikan rings disimpan sebagai stringified list
             try:
-                rings = eval(row["rings"])  # pastikan isinya list of coordinates
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -349,8 +359,13 @@ def get_provinsi():
 def get_kota_kabupaten(kode_provinsi: str):
     try:
         query = """
-            SELECT kode_kota_kabupaten, nama_kota_kabupaten, latitude, longitude, rings
-            FROM dataset_wilayah_indonesia.kota_kabupaten
+            SELECT
+                kode_kota_kabupaten,
+                nama_kota_kabupaten,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM kota_kabupaten
             WHERE kode_provinsi = %(kode_provinsi)s
         """
         df = pd.read_sql_query(query, con=engine, params={"kode_provinsi": kode_provinsi})
@@ -358,7 +373,8 @@ def get_kota_kabupaten(kode_provinsi: str):
         result = []
         for _, row in df.iterrows():
             try:
-                rings = eval(row["rings"])
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -375,12 +391,18 @@ def get_kota_kabupaten(kode_provinsi: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/kecamatan")
 def get_kecamatan(kode_kota_kabupaten: str):
     try:
         query = """
-            SELECT kode_kecamatan, nama_kecamatan, latitude, longitude, rings
-            FROM dataset_wilayah_indonesia.kecamatan
+            SELECT
+                kode_kecamatan,
+                nama_kecamatan,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM kecamatan
             WHERE kode_kota_kabupaten = %(kode_kota_kabupaten)s
         """
         df = pd.read_sql_query(query, con=engine, params={"kode_kota_kabupaten": kode_kota_kabupaten})
@@ -388,7 +410,8 @@ def get_kecamatan(kode_kota_kabupaten: str):
         result = []
         for _, row in df.iterrows():
             try:
-                rings = eval(row["rings"])
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -405,12 +428,17 @@ def get_kecamatan(kode_kota_kabupaten: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/kelurahan")
+@app.get("/kelurahan-desa")
 def get_kelurahan(kode_kecamatan: str):
     try:
         query = """
-            SELECT kode_kelurahan, nama_kelurahan, latitude, longitude, rings
-            FROM dataset_wilayah_indonesia.kelurahan
+            SELECT
+                kode_kelurahan_desa AS kode_kelurahan,
+                nama_kelurahan_desa AS nama_kelurahan,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM kelurahan_desa
             WHERE kode_kecamatan = %(kode_kecamatan)s
         """
         df = pd.read_sql_query(query, con=engine, params={"kode_kecamatan": kode_kecamatan})
@@ -418,7 +446,8 @@ def get_kelurahan(kode_kecamatan: str):
         result = []
         for _, row in df.iterrows():
             try:
-                rings = eval(row["rings"])
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
