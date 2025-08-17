@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from enum import Enum
 from typing import Dict, List, Tuple, Any, Optional
@@ -11,6 +11,16 @@ import joblib
 from sqlalchemy import create_engine
 from fastapi.middleware.cors import CORSMiddleware
 
+class GridData(BaseModel):
+    geometry_grid: Dict[str, Any]
+    feature_scores: Dict[str, float]
+    weights: Dict[str, float]
+
+class BatchRequest(BaseModel):
+    data: List[GridData]
+    low_range: float
+    high_range: float
+
 app = FastAPI()
 
 # Load model
@@ -18,8 +28,8 @@ model = joblib.load("model/random_forest_model.pkl")
 MODEL_ACCURACY = 0.92
 
 # Database configuration
-DATABASE_URL = "postgresql://postgres:HansAngela09@localhost:5432/batas_wilayah_indonesia"
-DATABASE_URL_DUMMY_BPS = "postgresql://postgres:HansAngela09@localhost:5432/dummy_bps"
+DATABASE_URL = "postgresql://postgres@localhost:5432/region_indonesia"
+DATABASE_URL_DUMMY_BPS = "postgresql://postgres@localhost:5432/BPS_LI"
 engine = create_engine(DATABASE_URL)
 engine_dummy_bps = create_engine(DATABASE_URL_DUMMY_BPS)
 
@@ -72,6 +82,12 @@ feature_map = {
     "poiarea": "poiarea",
     "road": "road",
     "slope": "slope"
+}
+
+FACILITY_CONFIG = {
+    "hotel": {"table": "Hotel_P", "name_col": "nama", "geom_col": "smgeometry"},
+    "rumah_sakit": {"table": "RumahSakit_P", "name_col": "nama", "geom_col": "smgeometry"},
+    "sekolah": {"table": "Sekolah_P", "name_col": "namobj", "geom_col": "smgeometry"},
 }
 
 # Helper functions
@@ -147,98 +163,122 @@ def get_slope_geodataframe():
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 # Endpoints
-@app.post("/batch-predict", response_model=List[SuitabilityResponse])
-async def batch_predict_suitability(request: BatchSuitabilityRequest):
+@app.post("/batch-predict")
+async def batch_predict_suitability(request: BatchRequest):
     try:
-        # Validate weights
-        total_weight = 0.0
-        converted_weights = {}
-        for api_key in feature_map.keys():
-            if api_key not in request.weights:
-                raise HTTPException(status_code=400, detail=f"Missing weight key: {api_key}")
-            try:
-                weight = float(request.weights[api_key])
-                if weight < 0:
-                    raise ValueError(f"Weight for {api_key} must be non-negative")
-                converted_weights[api_key] = weight
-                total_weight += weight
-            except (ValueError, TypeError) as e:
-                raise HTTPException(status_code=400, detail=str(e))
+        grid_scores = []
 
-        if not np.isclose(total_weight, 100.0, atol=1e-6):
-            raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
+        # Step 1: calculate weighted scores (grid_value)
+        for grid_item in request.data:
+            weights = grid_item.weights
+            feature_scores = grid_item.feature_scores
 
-        non_zero_features = {k for k, w in converted_weights.items() if w > 0}
-        
-        # Pre-load all needed GeoDataFrames
-        gdfs = {
-            "siswa": get_siswa_putus_sekolah_geodataframe() if "jumlahsiswaputussekolah" in non_zero_features else None,
-            "kemiskinan": get_kemiskinan_geodataframe() if "kemiskinan" in non_zero_features else None,
-            "penduduk": get_kepadatan_penduduk_geodataframe() if "peopleden" in non_zero_features else None,
-            "poi": get_poi_geodataframe() if "poiarea" in non_zero_features else None,
-            "sungai": get_kedekatan_sungai_geodataframe() if "nearest_sungai" in non_zero_features else None,
-            "faskes": get_kedekatan_faskes_geodataframe() if "nearestfaskes" in non_zero_features else None,
-            "road": get_kedekatan_jalan_geodataframe() if "road" in non_zero_features else None,
-            "slope": get_slope_geodataframe() if "slope" in non_zero_features else None
-        }
+            # validate weight sum
+            total_weight = sum(weights.values())
+            if not np.isclose(total_weight, 100.0, atol=1e-6):
+                raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
+
+            # weighted sum = grid_value
+            grid_value = sum(feature_scores[k] * weights[k] for k in weights if k in feature_scores)
+
+            # get GDP separately (no weight)
+            gdp_value = feature_scores.get("gdp", None)
+
+            grid_scores.append({
+                "geometry": grid_item.geometry_grid,
+                "grid_value": grid_value,
+                "gdp": gdp_value
+            })
+
+        # Step 2: thresholds
+        unique_scores = sorted(set(gs["grid_value"] for gs in grid_scores))
+        n_unique = len(unique_scores)
+
+        thresholds = {}
+        if n_unique == 1:
+            thresholds = {"high": [unique_scores[0], None]}
+        elif n_unique == 2:
+            thresholds = {
+                "medium": [unique_scores[0], unique_scores[0]],
+                "high": [unique_scores[1], None]
+            }
+        elif n_unique == 3:
+            thresholds = {
+                "low": [unique_scores[0], unique_scores[0]],
+                "medium": [unique_scores[1], unique_scores[1]],
+                "high": [unique_scores[2], None]
+            }
+        else:  # >= 4
+            thresholds = {
+                "low": [unique_scores[0], unique_scores[1]],
+                "medium": [unique_scores[1] + 1, unique_scores[-2]],
+                "high": [unique_scores[-2] + 1, None]
+            }
 
         results = []
-        for i, grid in enumerate(request.geometry_grids):
-            try:
-                polygon = shape(grid)
-                input_gdf = gpd.GeoDataFrame([{'geometry': polygon}], crs="EPSG:4326")
 
-                # Get values for each feature
-                cleaned_scores = {
-                    "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], polygon, 's_siswaputussekolah'),
-                    "kemiskinan": get_intersect_value(gdfs["kemiskinan"], polygon, 's_kemiskinan'),
-                    "peopleden": get_intersect_value(gdfs["penduduk"], polygon, 's_pddk'),
-                    "poiarea": get_intersect_value(gdfs["poi"], polygon, 's_poi'),
-                    "nearest_sungai": get_intersect_value(gdfs["sungai"], polygon, 's_sungai'),
-                    "nearestfaskes": get_intersect_value(gdfs["faskes"], polygon, 's_faskes'),
-                    "road": get_intersect_value(gdfs["road"], polygon, 's_road'),
-                    "slope": get_intersect_value(gdfs["slope"], polygon, 's_slope')
-                }
+        # Step 3: classify + GDP downgrade
+        for gs in grid_scores:
+            val = gs["grid_value"]
+            category = None
 
-                # Prepare model input
-                model_input = {model_key: cleaned_scores[api_key] for api_key, model_key in feature_map.items()}
-                input_df = pd.DataFrame([model_input])
+            if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
+                category = "low"
+            elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
+                category = "medium"
+            elif "high" in thresholds and (val >= thresholds["high"][0]):
+                category = "high"
 
-                # Predict
-                predicted_class = model.predict(input_df)[0]
-                predicted_probs = model.predict_proba(input_df)[0]
-                category = label_mapping.get(predicted_class, SuitabilityCategory.NEUTRAL)
-                class_index = list(model.classes_).index(predicted_class)
-                confidence = float(predicted_probs[class_index])
-                norm_weights = {k: round(v / 100.0, 4) for k, v in converted_weights.items()}
+            # downgrade to low if GDP out of range
+            if category in ["medium", "high"]:
+                if gs["gdp"] is None or not (request.low_range <= gs["gdp"] <= request.high_range):
+                    category = "low"
 
-                # Prepare response
-                result = {
-                    "predicted_class": category,
-                    "confidence": confidence,
-                    "model_accuracy": MODEL_ACCURACY,
-                    "feature_scores": cleaned_scores,
-                    "weights_applied": norm_weights,
-                    "input_polygon": extract_coordinates(grid),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # Add grid_id if provided
-                if request.grid_ids and i < len(request.grid_ids):
-                    result["grid_id"] = request.grid_ids[i]
+            if category:
+                results.append({
+                    "geometry_grid": gs["geometry"],
+                    "grid_value": gs["grid_value"],
+                    "category": category
+                })
 
-                results.append(result)
-                
-            except Exception as e:
-                print(f"Error processing grid {i}: {str(e)}")
-                continue
+        return {
+            "data": results,
+            "thresholds": thresholds,
+            "low_range": request.low_range,
+            "high_range": request.high_range
+        }
 
-        return results
-
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+# --- Get Facilities Data ---
+@app.get("/facilities")
+def get_facilities(types: str = Query(..., description="Comma-separated facility types (e.g. hotel,sekolah)")):
+    try:
+        dfs = []
+        requested_types = [t.strip().lower() for t in types.split(",")]
+
+        for ftype in requested_types:
+            if ftype not in FACILITY_CONFIG:
+                raise HTTPException(status_code=400, detail=f"Unknown facility type: {ftype}")
+
+            config = FACILITY_CONFIG[ftype]
+            q = f"""
+                SELECT smid as id, {config['name_col']} as nama, '{ftype}' as type,
+                       ST_Y({config['geom_col']}) as latitude,
+                       ST_X({config['geom_col']}) as longitude
+                FROM "{config['table']}"
+            """
+            dfs.append(pd.read_sql_query(q, con=engine_dummy_bps))
+
+        if not dfs:
+            return []
+
+        df = pd.concat(dfs, ignore_index=True)
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Health Check ---
 @app.get("/health", response_model=HealthCheckResponse)

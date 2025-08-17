@@ -6,4 +6,3 @@ geopandas
 pandas
 numpy
 uvicorn
-scikit-learn
