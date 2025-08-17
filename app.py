@@ -1,14 +1,16 @@
+import json
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from enum import Enum
 from typing import Dict, List, Tuple, Any, Optional
 from shapely.geometry import shape, mapping
+from shapely.ops import unary_union
 from datetime import datetime
 import geopandas as gpd
 import pandas as pd
 import numpy as np
 import joblib
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from fastapi.middleware.cors import CORSMiddleware
 
 class GridData(BaseModel):
@@ -65,6 +67,10 @@ class HealthCheckResponse(BaseModel):
     timestamp: str
     model_loaded: bool
     dependencies: dict
+
+class BufferRequest(BaseModel):
+    buffer_polygons: List[Any]
+    recommended_area: List[Any]
 
 # Label and feature mapping
 label_mapping = {
@@ -279,6 +285,65 @@ def get_facilities(types: str = Query(..., description="Comma-separated facility
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Buffer Result ---
+@app.post("/buffer-result")
+def buffer_result(req: BufferRequest):
+    # --- Step 1: Convert inputs to Shapely ---
+    buffer_shapes = [shape(p) for p in req.buffer_polygons]
+    recommended_shapes = [shape(p) for p in req.recommended_area]
+
+    # Merge buffer polygons into one geometry
+    buffer_union = unary_union(buffer_shapes)
+
+    # Crop recommended areas (remove overlaps with buffer)
+    cropped = [r.difference(buffer_union) for r in recommended_shapes if not r.is_empty]
+
+    # --- Step 2: Fetch LahanKosong_P filtered by cropped polygons ---
+    lahan_kosong = []
+    with engine_dummy_bps.connect() as conn:
+        for c in cropped:
+            if c.is_empty:
+                continue
+
+            # Convert cropped polygon to WKT
+            cropped_wkt = c.wkt  
+
+            query = text("""
+                SELECT smid, smuserid, ST_AsGeoJSON(smgeometry) as geometry,
+                       userid, namobj, remark, kdprov, kdkab, kdkec,
+                       nmprov, nmkab, nmkec, region_code
+                FROM "LahanKosong_P"
+                WHERE ST_Intersects(
+                    smgeometry,
+                    ST_GeomFromText(:cropped_wkt, 4326)
+                );
+            """)
+
+            result = conn.execute(query, {"cropped_wkt": cropped_wkt}).fetchall()
+
+            for row in result:
+                lahan_kosong.append({
+                    "smid": row.smid,
+                    "smuserid": row.smuserid,
+                    "geometry": json.loads(row.geometry),
+                    "userid": row.userid,
+                    "namobj": row.namobj,
+                    "remark": row.remark,
+                    "kdprov": row.kdprov,
+                    "kdkab": row.kdkab,
+                    "kdkec": row.kdkec,
+                    "nmprov": row.nmprov,
+                    "nmkab": row.nmkab,
+                    "nmkec": row.nmkec,
+                    "region_code": row.region_code
+                })
+
+    # --- Step 3: Return cropped polygons & lahan kosong ---
+    return {
+        "cropped_polygons": [mapping(c) for c in cropped if not c.is_empty],
+        "lahan_kosong": lahan_kosong
+    }
 
 # --- Health Check ---
 @app.get("/health", response_model=HealthCheckResponse)
