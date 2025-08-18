@@ -36,8 +36,8 @@ ROOT_MEAN_SQUARED_ERROR = 0.0560
 R2_SCORE = 0.8643
 
 # Database configuration
-DATABASE_URL = "postgresql://postgres@localhost:5432/region_indonesia"
-DATABASE_URL_DUMMY_BPS = "postgresql://postgres@localhost:5432/BPS_LI"
+DATABASE_URL = "postgresql://postgres:HansAngela09@localhost:5432/region_indonesia"
+DATABASE_URL_DUMMY_BPS = "postgresql://postgres:HansAngela09@localhost:5432/BPS_LI"
 engine = create_engine(DATABASE_URL)
 engine_dummy_bps = create_engine(DATABASE_URL_DUMMY_BPS)
 
@@ -168,6 +168,12 @@ def get_poi_geodataframe():
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
+def get_gdp_geodataframe():
+    sql = """SELECT wadmkc, pendapatan, ST_AsGeoJSON(smgeometry) as geojson FROM "pendapatan_per_kapita_R" WHERE smgeometry IS NOT NULL"""
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+
 def get_kedekatan_sungai_geodataframe():
     sql = "SELECT s_sungai, ST_AsGeoJSON(smgeometry) as geojson FROM kedekatan_sungai WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
@@ -196,12 +202,52 @@ def get_slope_geodataframe():
 @app.post("/batch-predict")
 async def batch_predict_suitability(request: BatchRequest):
     try:
+        # --- Step 0: preload GeoDataFrames once (hanya feature yang punya bobot > 0) ---
+        all_weights = {k for grid in request.data for k, w in grid.weights.items() if w > 0}
+
+        gdfs = {
+            "siswa": get_siswa_putus_sekolah_geodataframe() if "jumlahsiswaputussekolah" in all_weights else None,
+            "kemiskinan": get_kemiskinan_geodataframe() if "kemiskinan" in all_weights else None,
+            "penduduk": get_kepadatan_penduduk_geodataframe() if "peopleden" in all_weights else None,
+            "poi": get_poi_geodataframe() if "poiarea" in all_weights else None,
+            "sungai": get_kedekatan_sungai_geodataframe() if "nearest_sungai" in all_weights else None,
+            "faskes": get_kedekatan_faskes_geodataframe() if "nearestfaskes" in all_weights else None,
+            "road": get_kedekatan_jalan_geodataframe() if "road" in all_weights else None,
+            "slope": get_slope_geodataframe() if "slope" in all_weights else None,
+            "gdp": get_gdp_geodataframe(),
+        }
+
         grid_scores = []
 
-        # Step 1: calculate weighted scores (grid_value)
+        # --- Step 1: hitung GDP dulu ---
         for grid_item in request.data:
+            polygon = shape(grid_item.geometry_grid)
+
+            gdp_value = get_intersect_value(gdfs["gdp"], polygon, 'pendapatan') if gdfs["gdp"] is not None else None
+
+            # kalau GDP tidak valid / di luar range -> langsung kategori low
+            if gdp_value is None or not (request.low_range <= gdp_value <= request.high_range):
+                grid_scores.append({
+                    "geometry": grid_item.geometry_grid,
+                    "grid_value": 0.0,   # ga usah hitung
+                    "gdp": gdp_value,
+                    "category": "low"
+                })
+                continue
+
+            # --- Step 2: baru hitung feature lain kalau GDP lolos filter ---
             weights = grid_item.weights
-            feature_scores = grid_item.feature_scores
+
+            feature_scores = {
+                "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], polygon, 's_siswaputussekolah') if gdfs["siswa"] is not None else 0.0,
+                "kemiskinan": get_intersect_value(gdfs["kemiskinan"], polygon, 's_kemiskinan') if gdfs["kemiskinan"] is not None else 0.0,
+                "peopleden": get_intersect_value(gdfs["penduduk"], polygon, 's_pddk') if gdfs["penduduk"] is not None else 0.0,
+                "poiarea": get_intersect_value(gdfs["poi"], polygon, 's_poi') if gdfs["poi"] is not None else 0.0,
+                "nearest_sungai": get_intersect_value(gdfs["sungai"], polygon, 's_sungai') if gdfs["sungai"] is not None else 0.0,
+                "nearestfaskes": get_intersect_value(gdfs["faskes"], polygon, 's_faskes') if gdfs["faskes"] is not None else 0.0,
+                "road": get_intersect_value(gdfs["road"], polygon, 's_road') if gdfs["road"] is not None else 0.0,
+                "slope": get_intersect_value(gdfs["slope"], polygon, 's_slope') if gdfs["slope"] is not None else 0.0,
+            }
 
             # validate weight sum
             total_weight = sum(weights.values())
@@ -209,19 +255,17 @@ async def batch_predict_suitability(request: BatchRequest):
                 raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
 
             # weighted sum = grid_value
-            grid_value = sum(feature_scores[k] * weights[k] for k in weights if k in feature_scores)
-
-            # get GDP separately (no weight)
-            gdp_value = feature_scores.get("gdp", None)
+            grid_value = sum(feature_scores.get(k, 0.0) * (weights.get(k, 0.0) / 100.0) for k in weights)
 
             grid_scores.append({
                 "geometry": grid_item.geometry_grid,
                 "grid_value": grid_value,
-                "gdp": gdp_value
+                "gdp": gdp_value,
+                "category": None  # klasifikasi nanti
             })
 
-        # Step 2: thresholds
-        unique_scores = sorted(set(gs["grid_value"] for gs in grid_scores))
+        # --- Step 3: thresholds (hanya pakai grid yg punya nilai) ---
+        unique_scores = sorted(set(gs["grid_value"] for gs in grid_scores if gs["category"] is None))
         n_unique = len(unique_scores)
 
         thresholds = {}
@@ -238,17 +282,24 @@ async def batch_predict_suitability(request: BatchRequest):
                 "medium": [unique_scores[1], unique_scores[1]],
                 "high": [unique_scores[2], None]
             }
-        else:  # >= 4
+        elif n_unique >= 4:
             thresholds = {
                 "low": [unique_scores[0], unique_scores[1]],
                 "medium": [unique_scores[1] + 1, unique_scores[-2]],
                 "high": [unique_scores[-2] + 1, None]
             }
 
+        # --- Step 4: assign category untuk yg lolos GDP ---
         results = []
-
-        # Step 3: classify + GDP downgrade
         for gs in grid_scores:
+            if gs["category"] == "low":  # udah ditandai karena GDP gagal
+                results.append({
+                    "geometry_grid": gs["geometry"],
+                    "grid_value": gs["grid_value"],
+                    "category": "low"
+                })
+                continue
+
             val = gs["grid_value"]
             category = None
 
@@ -259,17 +310,11 @@ async def batch_predict_suitability(request: BatchRequest):
             elif "high" in thresholds and (val >= thresholds["high"][0]):
                 category = "high"
 
-            # downgrade to low if GDP out of range
-            if category in ["medium", "high"]:
-                if gs["gdp"] is None or not (request.low_range <= gs["gdp"] <= request.high_range):
-                    category = "low"
-
-            if category:
-                results.append({
-                    "geometry_grid": gs["geometry"],
-                    "grid_value": gs["grid_value"],
-                    "category": category
-                })
+            results.append({
+                "geometry_grid": gs["geometry"],
+                "grid_value": gs["grid_value"],
+                "category": category
+            })
 
         return {
             "data": results,
