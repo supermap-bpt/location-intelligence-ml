@@ -636,7 +636,7 @@ def get_pendidikan(nmkec: str = Query(..., description="Nama kecamatan (bisa mul
 
         query = text("""
             SELECT namobj, smgeometry
-            FROM "Pendidikan_P"
+            FROM "Sekolah_P"
             WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
         """)
 
