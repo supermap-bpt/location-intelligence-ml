@@ -270,23 +270,23 @@ async def batch_predict_suitability(request: BatchRequest):
 
         thresholds = {}
         if n_unique == 1:
-            thresholds = {"high": [unique_scores[0], None]}
+            thresholds = {"high": [unique_scores[0], float("inf")]}
         elif n_unique == 2:
             thresholds = {
                 "medium": [unique_scores[0], unique_scores[0]],
-                "high": [unique_scores[1], None]
+                "high": [unique_scores[1], float("inf")]
             }
         elif n_unique == 3:
             thresholds = {
                 "low": [unique_scores[0], unique_scores[0]],
                 "medium": [unique_scores[1], unique_scores[1]],
-                "high": [unique_scores[2], None]
+                "high": [unique_scores[2], float("inf")]
             }
         elif n_unique >= 4:
             thresholds = {
                 "low": [unique_scores[0], unique_scores[1]],
-                "medium": [unique_scores[1] + 1, unique_scores[-2]],
-                "high": [unique_scores[-2] + 1, None]
+                "medium": [unique_scores[1], unique_scores[-2]],
+                "high": [unique_scores[-2], float("inf")]
             }
 
         # --- Step 4: assign category untuk yg lolos GDP ---
@@ -307,8 +307,12 @@ async def batch_predict_suitability(request: BatchRequest):
                 category = "low"
             elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
                 category = "medium"
-            elif "high" in thresholds and (val >= thresholds["high"][0]):
+            elif "high" in thresholds and val >= thresholds["high"][0]:
                 category = "high"
+
+            # fallback supaya ga pernah null
+            if category is None:
+                category = "medium"
 
             results.append({
                 "geometry_grid": gs["geometry"],
