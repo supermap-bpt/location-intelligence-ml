@@ -270,7 +270,7 @@ async def batch_predict_suitability(request: BatchRequest):
 
         thresholds = {}
         if n_unique == 1:
-            thresholds = {"high": [unique_scores[0], float("inf")]}
+            thresholds = {"high": [unique_scores[0], 1e10]}  # Use large finite number instead of inf
         elif n_unique == 2:
             thresholds = {
                 "medium": [unique_scores[0], unique_scores[0]],
