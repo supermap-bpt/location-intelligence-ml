@@ -15,6 +15,10 @@ from sqlalchemy import create_engine, text
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Query
 import json
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class GridData(BaseModel):
     geometry_grid: Dict[str, Any]
@@ -36,8 +40,8 @@ ROOT_MEAN_SQUARED_ERROR = 0.0560
 R2_SCORE = 0.8643
 
 # Database configuration
-DATABASE_URL = "postgresql://postgres:12345678@localhost:5432/batas_wilayah"
-DATABASE_URL_DUMMY_BPS = "postgresql://postgres:12345678@localhost:5432/dummy_parameter_bps"
+DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL_DUMMY_BPS = os.getenv("DATABASE_URL_DUMMY_BPS")
 engine = create_engine(DATABASE_URL)
 engine_dummy_bps = create_engine(DATABASE_URL_DUMMY_BPS)
 
