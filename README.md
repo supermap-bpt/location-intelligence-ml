@@ -53,7 +53,7 @@ project/
 ---
 ## 🚦 Running the API Server
 ```
-uvicorn app:app --reload
+uvicorn app.main:app --reload
 ```
 
 This will start the server at:
