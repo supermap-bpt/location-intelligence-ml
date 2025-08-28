@@ -9,4 +9,3 @@ numpy
 uvicorn
 sqlalchemy
 scikit-learn
-psycopg2
