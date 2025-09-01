@@ -1,6 +1,7 @@
 from sqlalchemy import text
 from app.database import engine, engine_dummy_bps
 from app.config import FACILITY_CONFIG
+from typing import List
 
 # ==================
 # REGION ENDPOINTS
@@ -209,16 +210,18 @@ def get_facilities_service(types: str):
 
 
 
-def get_hotels_service(nmkec: str):
+def get_hotels_service(nmkec: List[str]):
     try:
-        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
-        if not kecamatan_list:
+        if not nmkec:
             raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
 
+        # Convert to lowercase for case-insensitive comparison
+        kecamatan_list = [k.strip().lower() for k in nmkec if k.strip()]
+        
         query = text("""
             SELECT nama, ST_AsGeoJSON(smgeometry)::json AS geometry
             FROM "Hotel_P"
-            WHERE LOWER(nmkec) = ANY(SELECT LOWER(unnest(:nmkec_list)))
+            WHERE LOWER(nmkec) = ANY(:nmkec_list)
         """)
 
         with engine_dummy_bps.connect() as conn:
@@ -228,17 +231,18 @@ def get_hotels_service(nmkec: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def get_pendidikan_service(nmkec: str):
+# Lakukan modifikasi yang sama untuk fungsi lainnya
+def get_pendidikan_service(nmkec: List[str]):
     try:
-        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
-        if not kecamatan_list:
+        if not nmkec:
             raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
 
+        kecamatan_list = [k.strip().lower() for k in nmkec if k.strip()]
+        
         query = text("""
             SELECT namobj, ST_AsGeoJSON(smgeometry)::json AS geometry
             FROM "Sekolah_P"
-            WHERE LOWER(nmkec) = ANY(SELECT LOWER(unnest(:nmkec_list)))
+            WHERE LOWER(nmkec) = ANY(:nmkec_list)
         """)
 
         with engine_dummy_bps.connect() as conn:
@@ -248,17 +252,17 @@ def get_pendidikan_service(nmkec: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def get_pusatperbelanjaan_service(nmkec: str):
+def get_pusatperbelanjaan_service(nmkec: List[str]):
     try:
-        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
-        if not kecamatan_list:
+        if not nmkec:
             raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
 
+        kecamatan_list = [k.strip().lower() for k in nmkec if k.strip()]
+        
         query = text("""
             SELECT namobj, ST_AsGeoJSON(smgeometry)::json AS geometry
             FROM "PusatPerbelanjaan_P"
-            WHERE LOWER(nmkec) = ANY(SELECT LOWER(unnest(:nmkec_list)))
+            WHERE LOWER(nmkec) = ANY(:nmkec_list)
         """)
 
         with engine_dummy_bps.connect() as conn:
@@ -268,17 +272,17 @@ def get_pusatperbelanjaan_service(nmkec: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def get_rumahsakit_service(nmkec: str):
+def get_rumahsakit_service(nmkec: List[str]):
     try:
-        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
-        if not kecamatan_list:
+        if not nmkec:
             raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
 
+        kecamatan_list = [k.strip().lower() for k in nmkec if k.strip()]
+        
         query = text("""
             SELECT namobj, ST_AsGeoJSON(smgeometry)::json AS geometry
             FROM "RumahSakit_P"
-            WHERE LOWER(nmkec) = ANY(SELECT LOWER(unnest(:nmkec_list)))
+            WHERE LOWER(nmkec) = ANY(:nmkec_list)
         """)
 
         with engine_dummy_bps.connect() as conn:
