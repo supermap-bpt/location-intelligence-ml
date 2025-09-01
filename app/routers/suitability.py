@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.models.requests import BatchRequest
-from app.services.suitability import batch_predict_service
+from app.services.suitability.suitability import batch_predict_service
 
 router = APIRouter()
 

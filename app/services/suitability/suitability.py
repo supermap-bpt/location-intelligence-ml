@@ -4,7 +4,7 @@ from app.models.requests import BatchRequest, GridData
 from app.config import METRICS
 import numpy as np
 from shapely.geometry import shape
-from app.services.data_loader import (
+from app.services.suitability.loader import (
     get_siswa_putus_sekolah_geodataframe,
     get_kemiskinan_geodataframe,
     get_kepadatan_penduduk_geodataframe,
@@ -15,21 +15,7 @@ from app.services.data_loader import (
     get_kedekatan_jalan_geodataframe,
     get_slope_geodataframe
 )
-
-def get_intersect_value(gdf, polygon, score_col):
-    """
-    Helper function to calculate intersection value between GeoDataFrame and polygon
-    """
-    if gdf is None or gdf.empty:
-        return 0
-    gdf = gdf.to_crs("EPSG:4326")
-    gdf['intersection'] = gdf.geometry.intersection(polygon)
-    gdf = gdf[gdf['intersection'].area > 0]
-    if gdf.empty:
-        return 0
-    gdf['intersection_area'] = gdf['intersection'].area
-    max_idx = gdf['intersection_area'].idxmax()
-    return float(gdf.loc[max_idx, score_col])
+from app.services.suitability.intersect import get_intersect_value
 
 def batch_predict_service(request: BatchRequest):
     """
