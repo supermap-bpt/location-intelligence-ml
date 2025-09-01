@@ -40,25 +40,14 @@ def batch_predict_service(request: BatchRequest):
 
         grid_scores = []
 
-        # --- Step 1: calculate GDP first ---
+        # --- Step 1: calculate GDP and feature scores for all grids ---
         for grid_item in request.data:
             polygon = shape(grid_item.geometry_grid)
 
+            # Calculate GDP value
             gdp_value = get_intersect_value(gdfs["gdp"], polygon, 'pendapatan') if gdfs["gdp"] is not None else None
 
-            # If GDP is not valid / outside range -> directly categorize as low
-            if gdp_value is None or not (request.low_range <= gdp_value <= request.high_range):
-                grid_scores.append({
-                    "geometry": grid_item.geometry_grid,
-                    "grid_value": 0.0,   # don't need to calculate
-                    "gdp": gdp_value,
-                    "category": "low"
-                })
-                continue
-
-            # --- Step 2: calculate other features only if GDP passes filter ---
-            weights = grid_item.weights
-
+            # Calculate all feature scores
             feature_scores = {
                 "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], polygon, 's_siswaputussekolah') if gdfs["siswa"] is not None else 0.0,
                 "kemiskinan": get_intersect_value(gdfs["kemiskinan"], polygon, 's_kemiskinan') if gdfs["kemiskinan"] is not None else 0.0,
@@ -69,6 +58,21 @@ def batch_predict_service(request: BatchRequest):
                 "road": get_intersect_value(gdfs["road"], polygon, 's_road') if gdfs["road"] is not None else 0.0,
                 "slope": get_intersect_value(gdfs["slope"], polygon, 's_slope') if gdfs["slope"] is not None else 0.0,
             }
+
+            # If GDP is not valid / outside range -> directly categorize as low
+            if gdp_value is None or not (request.low_range <= gdp_value <= request.high_range):
+                grid_scores.append({
+                    "geometry": grid_item.geometry_grid,
+                    "grid_value": 0.0,
+                    "gdp": gdp_value,
+                    "category": "low",
+                    "feature_scores": feature_scores,
+                    "weights": grid_item.weights
+                })
+                continue
+
+            # --- Step 2: calculate weighted score only if GDP passes filter ---
+            weights = grid_item.weights
 
             # Validate weight sum
             total_weight = sum(weights.values())
@@ -82,7 +86,9 @@ def batch_predict_service(request: BatchRequest):
                 "geometry": grid_item.geometry_grid,
                 "grid_value": grid_value,
                 "gdp": gdp_value,
-                "category": None  # classify later
+                "category": None,  # classify later
+                "feature_scores": feature_scores,
+                "weights": grid_item.weights
             })
 
         # --- Step 3: determine thresholds (only for grids with values) ---
@@ -110,10 +116,10 @@ def batch_predict_service(request: BatchRequest):
                 "high": [unique_scores[2] + 1, unique_scores[3]]
             }
 
-        # --- Step 4: assign category for grids that passed GDP filter ---
+        # --- Step 4: assign category for all grids ---
         results = []
         for gs in grid_scores:
-            if gs["category"] == "low":  # already marked as GDP failed
+            if gs["category"] == "low":  # GDP filter failed
                 results.append(SuitabilityResponse(
                     predicted_class=SuitabilityCategory.NOT_RECOMMENDED,
                     confidence=0.0,
@@ -121,8 +127,8 @@ def batch_predict_service(request: BatchRequest):
                     mean_squared_error=METRICS["MSE"],
                     root_mean_squared_error=METRICS["RMSE"],
                     r2_score=METRICS["R2"],
-                    feature_scores={},
-                    weights_applied={},
+                    feature_scores=gs["feature_scores"],
+                    weights_applied=gs["weights"],
                     input_polygon=gs["geometry"].get("coordinates", []),
                     timestamp=datetime.now().isoformat(),
                     grid_id=None
@@ -143,22 +149,6 @@ def batch_predict_service(request: BatchRequest):
             if category is None:
                 category = SuitabilityCategory.NEUTRAL
 
-            # Create feature scores dictionary for this grid
-            grid_feature_scores = {
-                "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], shape(gs["geometry"]), 's_siswaputussekolah') if gdfs["siswa"] is not None else 0.0,
-                "kemiskinan": get_intersect_value(gdfs["kemiskinan"], shape(gs["geometry"]), 's_kemiskinan') if gdfs["kemiskinan"] is not None else 0.0,
-                "peopleden": get_intersect_value(gdfs["penduduk"], shape(gs["geometry"]), 's_pddk') if gdfs["penduduk"] is not None else 0.0,
-                "poiarea": get_intersect_value(gdfs["poi"], shape(gs["geometry"]), 's_poi') if gdfs["poi"] is not None else 0.0,
-                "nearest_sungai": get_intersect_value(gdfs["sungai"], shape(gs["geometry"]), 's_sungai') if gdfs["sungai"] is not None else 0.0,
-                "nearestfaskes": get_intersect_value(gdfs["faskes"], shape(gs["geometry"]), 's_faskes') if gdfs["faskes"] is not None else 0.0,
-                "road": get_intersect_value(gdfs["road"], shape(gs["geometry"]), 's_road') if gdfs["road"] is not None else 0.0,
-                "slope": get_intersect_value(gdfs["slope"], shape(gs["geometry"]), 's_slope') if gdfs["slope"] is not None else 0.0,
-            }
-
-            # Find the original grid item to get weights
-            original_item = next((item for item in request.data 
-                                if item.geometry_grid == gs["geometry"]), None)
-            
             results.append(SuitabilityResponse(
                 predicted_class=category,
                 confidence=min(1.0, val / 10.0),  # Simple confidence calculation
@@ -166,8 +156,8 @@ def batch_predict_service(request: BatchRequest):
                 mean_squared_error=METRICS["MSE"],
                 root_mean_squared_error=METRICS["RMSE"],
                 r2_score=METRICS["R2"],
-                feature_scores=grid_feature_scores,
-                weights_applied=original_item.weights if original_item else {},
+                feature_scores=gs["feature_scores"],  # Use pre-calculated feature scores
+                weights_applied=gs["weights"],
                 input_polygon=gs["geometry"].get("coordinates", []),
                 timestamp=datetime.now().isoformat(),
                 grid_id=None

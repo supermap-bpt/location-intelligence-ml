@@ -3,7 +3,6 @@ from typing import Dict, List, Any
 
 class GridData(BaseModel):
     geometry_grid: Dict[str, Any]
-    feature_scores: Dict[str, float]
     weights: Dict[str, float]
 
 class BatchRequest(BaseModel):
