@@ -11,10 +11,9 @@ def store_grid_score(request: GridStoreRequest):
                 kode_provinsi,
                 kode_kota_kabupaten,
                 kode_kecamatan,
-                high_range,
-                medium_range,
-                low_range,
-                selected_facilites,
+                thresholds,
+                low_range_gdp,
+                high_range_gdp,
                 grid_geometries
             )
             VALUES (
@@ -22,10 +21,9 @@ def store_grid_score(request: GridStoreRequest):
                 :kode_provinsi,
                 :kode_kota_kabupaten,
                 :kode_kecamatan,
-                :high_range,
-                :medium_range,
-                :low_range,
-                CAST(:selected_facilites AS JSONB),
+                CAST(:thresholds AS JSONB),
+                :low_range_gdp,
+                :high_range_gdp,
                 CAST(:grid_geometries AS JSONB)
             )
             RETURNING id
@@ -36,10 +34,9 @@ def store_grid_score(request: GridStoreRequest):
             "kode_provinsi": request.kode_provinsi,
             "kode_kota_kabupaten": request.kode_kota_kabupaten,
             "kode_kecamatan": request.kode_kecamatan,
-            "high_range": request.high_range,
-            "medium_range": request.medium_range,
-            "low_range": request.low_range,
-            "selected_facilites": json.dumps([f.dict() for f in request.selected_facilites]),
+            "thresholds": json.dumps(request.thresholds),
+            "low_range_gdp": request.low_range_gdp,
+            "high_range_gdp": request.high_range_gdp,
             "grid_geometries": json.dumps([g.dict() for g in request.grid_geometries]),
         })
         inserted_id = result.scalar_one()

@@ -31,10 +31,9 @@ class GridStoreRequest(BaseModel):
     kode_provinsi: int
     kode_kota_kabupaten: int
     kode_kecamatan: int
-    high_range: str
-    medium_range: str
-    low_range: str
-    selected_facilites: List[Facility]
+    low_range_gdp: float
+    high_range_gdp: float
+    thresholds: Dict[str, List[float]]
     grid_geometries: List[GridGeometry]
 
 class AnalysisResultRequest(BaseModel):

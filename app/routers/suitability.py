@@ -7,6 +7,6 @@ router = APIRouter()
 @router.post("/batch-predict")
 async def batch_predict(request: BatchRequest):
     try:
-        return batch_predict_service(request)
+        return await batch_predict_service(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
