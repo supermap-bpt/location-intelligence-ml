@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 class GridData(BaseModel):
     geometry_grid: Dict[str, Any]
@@ -23,8 +23,8 @@ class Facility(BaseModel):
 
 class GridGeometry(BaseModel):
     id: int
-    predicted_class: str
-    grid_value: str
+    predicted_class: Optional[str]
+    grid_value: float
     geometry: Dict[str, Any]
     feature_scores: Dict[str, float]
     weights_applied: Dict[str, float]
