@@ -61,7 +61,7 @@ async def batch_predict_service(request: BatchRequest):
                     "feature_scores": feature_scores,
                     "weights_applied": weights,
                     "gdp": gdp_value,
-                    "category": "low",         # mark as low immediately
+                    "predicted_class": "low",         # mark as low immediately
                     "forced_by_gdp": True
                 })
             else:
@@ -72,7 +72,7 @@ async def batch_predict_service(request: BatchRequest):
                     "feature_scores": feature_scores,
                     "weights_applied": weights,
                     "gdp": gdp_value,
-                    "category": None,          # to be assigned by thresholds
+                    "predicted_class": None,          # to be assigned by thresholds
                     "forced_by_gdp": False
                 })
 
@@ -104,18 +104,18 @@ async def batch_predict_service(request: BatchRequest):
         # --- Assign categories (keep GDP-forced low as low) ---
         results = []
         for gs in grid_scores:
-            if gs["category"] == "low" and gs["forced_by_gdp"]:
-                category = "low",
+            if gs["predicted_class"] == "low" and gs["forced_by_gdp"]:
+                category = "SuitabilityCategory.NOT_RECOMMENDED"
             else:
                 val = gs["grid_value"]
                 if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
-                    category = "low",
+                    category = SuitabilityCategory.NOT_RECOMMENDED
                 elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
-                    category = "medium"
+                    category = SuitabilityCategory.NEUTRAL
                 elif "high" in thresholds and val >= thresholds["high"][0]:
-                    category = "high"
+                    category = SuitabilityCategory.RECOMMENDED
                 else:
-                    category = "medium"
+                    category = SuitabilityCategory.NEUTRAL
 
             results.append({
                 "predicted_class": category,
