@@ -25,6 +25,8 @@ class GridGeometry(BaseModel):
     id: int
     score: float
     geometry: Dict[str, Any]
+    feature_scores: Dict[str, float]
+    weights_applied: Dict[str, float]
 
 class GridStoreRequest(BaseModel):
     nama_layer: str
