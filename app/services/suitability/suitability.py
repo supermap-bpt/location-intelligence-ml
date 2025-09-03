@@ -105,17 +105,17 @@ async def batch_predict_service(request: BatchRequest):
         results = []
         for gs in grid_scores:
             if gs["category"] == "low" and gs["forced_by_gdp"]:
-                category = SuitabilityCategory.NOT_RECOMMENDED,
+                category = "low",
             else:
                 val = gs["grid_value"]
                 if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
-                    category = SuitabilityCategory.NOT_RECOMMENDED,
+                    category = "low",
                 elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
-                    category = SuitabilityCategory.NEUTRAL
+                    category = "medium"
                 elif "high" in thresholds and val >= thresholds["high"][0]:
-                    category = SuitabilityCategory.RECOMMENDED
+                    category = "high"
                 else:
-                    category = SuitabilityCategory.NEUTRAL
+                    category = "medium"
 
             results.append({
                 "predicted_class": category,
