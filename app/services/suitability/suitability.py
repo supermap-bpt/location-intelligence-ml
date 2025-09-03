@@ -1,6 +1,7 @@
 import numpy as np
 from fastapi import HTTPException
 from shapely.geometry import shape
+from app.models.responses import SuitabilityCategory
 from app.models.requests import BatchRequest
 from app.services.suitability.intersect import get_intersect_value
 from app.services.suitability import loaders
@@ -104,22 +105,22 @@ async def batch_predict_service(request: BatchRequest):
         results = []
         for gs in grid_scores:
             if gs["category"] == "low" and gs["forced_by_gdp"]:
-                category = "low"
+                category = SuitabilityCategory.NOT_RECOMMENDED,
             else:
                 val = gs["grid_value"]
                 if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
-                    category = "low"
+                    category = SuitabilityCategory.NOT_RECOMMENDED,
                 elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
-                    category = "medium"
+                    category = SuitabilityCategory.NEUTRAL
                 elif "high" in thresholds and val >= thresholds["high"][0]:
-                    category = "high"
+                    category = SuitabilityCategory.RECOMMENDED
                 else:
-                    category = "medium"
+                    category = SuitabilityCategory.NEUTRAL
 
             results.append({
+                "predicted_class": category,
                 "geometry_grid": gs["geometry"],
                 "grid_value": gs["grid_value"],
-                "category": category,
                 "feature_scores": gs["feature_scores"],     # always present now
                 "weights_applied": gs["weights_applied"],   # always present now
                 "gdp": gs["gdp"]
