@@ -105,7 +105,7 @@ async def batch_predict_service(request: BatchRequest):
         results = []
         for gs in grid_scores:
             if gs["predicted_class"] == "low" and gs["forced_by_gdp"]:
-                category = "SuitabilityCategory.NOT_RECOMMENDED"
+                category = SuitabilityCategory.NOT_RECOMMENDED
             else:
                 val = gs["grid_value"]
                 if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
