@@ -20,7 +20,6 @@ class Facility(BaseModel):
     name: str
     geometry: Dict[str, Any]
 
-
 class GridGeometry(BaseModel):
     id: int
     predicted_class: Optional[str]
