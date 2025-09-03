@@ -24,7 +24,7 @@ class Facility(BaseModel):
 class GridGeometry(BaseModel):
     id: int
     predicted_class: str
-    grid_value: str
+    grid_value: float
     geometry: Dict[str, Any]
     feature_scores: Dict[str, float]
     weights_applied: Dict[str, float]
