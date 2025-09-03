@@ -6,7 +6,6 @@ from app.models.requests import BatchRequest
 from app.services.suitability.intersect import get_intersect_value
 from app.services.suitability import loaders
 
-
 async def batch_predict_service(request: BatchRequest):
     try:
         # figure out which layers we actually need
@@ -53,7 +52,6 @@ async def batch_predict_service(request: BatchRequest):
             gdp_in_range = (gdp_value is not None) and (request.low_range <= gdp_value <= request.high_range)
 
             if not gdp_in_range:
-                # Forced low by GDP (but keep feature_scores & weights for every polygon)
                 grid_scores.append({
                     "geometry": grid_item.geometry_grid,
                     "grid_value": 0.0,
@@ -61,7 +59,7 @@ async def batch_predict_service(request: BatchRequest):
                     "feature_scores": feature_scores,
                     "weights_applied": weights,
                     "gdp": gdp_value,
-                    "predicted_class": "low",         # mark as low immediately
+                    "predicted_class": "low",
                     "forced_by_gdp": True
                 })
             else:
@@ -72,33 +70,37 @@ async def batch_predict_service(request: BatchRequest):
                     "feature_scores": feature_scores,
                     "weights_applied": weights,
                     "gdp": gdp_value,
-                    "predicted_class": None,          # to be assigned by thresholds
+                    "predicted_class": None,
                     "forced_by_gdp": False
                 })
 
-        # --- Thresholds (quantile-based) only on GDP-valid items ---
+        # --- Thresholds: fair thirds with rounding and +0.01 gap ---
         valid_values = [gs["grid_value"] for gs in grid_scores if not gs["forced_by_gdp"]]
-        thresholds = {}
 
-        if len(valid_values) >= 3:
-            q33, q66 = np.percentile(valid_values, [33.33, 66.67])
-            # inclusive on lower bounds to avoid gaps
-            thresholds = {
-                "low":    [float(min(valid_values)), float(q33)],
-                "medium": [float(q33), float(q66)],
-                "high":   [float(q66), float(max(valid_values))]
-            }
-        elif len(valid_values) == 2:
-            lo, hi = sorted(valid_values)
-            thresholds = {
-                "medium": [float(lo), float(lo)],
-                "high":   [float(lo), float(hi)]
-            }
-        elif len(valid_values) == 1:
-            v = float(valid_values[0])
-            thresholds = {"high": [v, v]}
+        if len(valid_values) >= 1:
+            vmin = float(min(valid_values))
+            vmax = float(max(valid_values))
+            spread = vmax - vmin
+
+            if spread <= 1e-12:
+                thresholds = {"high": [round(vmin, 2), round(vmax, 2)]}
+            else:
+                c1 = vmin + spread / 3.0
+                c2 = vmin + 2.0 * spread / 3.0
+
+                # Round values
+                vmin = round(vmin, 2)
+                c1   = round(c1, 2)
+                c2   = round(c2, 2)
+                vmax = round(vmax, 2)
+
+                # Apply +0.01 step between categories
+                thresholds = {
+                    "low":    [vmin, c1],
+                    "medium": [c1 + 0.01, c2],
+                    "high":   [c2 + 0.01, vmax],
+                }
         else:
-            # no valid (GDP-passing) values; keep everything as low
             thresholds = {"low": [0.0, 0.0]}
 
         # --- Assign categories (keep GDP-forced low as low) ---
@@ -121,8 +123,8 @@ async def batch_predict_service(request: BatchRequest):
                 "predicted_class": category,
                 "geometry_grid": gs["geometry"],
                 "grid_value": gs["grid_value"],
-                "feature_scores": gs["feature_scores"],     # always present now
-                "weights_applied": gs["weights_applied"],   # always present now
+                "feature_scores": gs["feature_scores"],
+                "weights_applied": gs["weights_applied"],
                 "gdp": gs["gdp"]
             })
 
