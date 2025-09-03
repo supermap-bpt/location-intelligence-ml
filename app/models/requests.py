@@ -30,9 +30,9 @@ class GridGeometry(BaseModel):
 
 class GridStoreRequest(BaseModel):
     nama_layer: str
-    kode_provinsi: int
-    kode_kota_kabupaten: int
-    kode_kecamatan: int
+    kode_provinsi: str             
+    kode_kota_kabupaten: str          
+    kode_kecamatan: List[str]
     low_range_gdp: float
     high_range_gdp: float
     thresholds: Dict[str, List[float]]
