@@ -220,12 +220,24 @@ def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
 def get_all_grid_scores():
     with engine_dummy_bps.begin() as conn:
         rows = conn.execute(text("""
-            SELECT id, nama_layer, kode_provinsi, kode_kota_kabupaten, created_at
+            SELECT
+                id,
+                nama_layer,
+                kode_provinsi,
+                kode_kota_kabupaten,
+                thresholds,
+                created_at
             FROM grid_scores
             ORDER BY created_at DESC, id DESC
         """)).mappings().all()
-    return [dict(r) for r in rows]
 
+    return [
+        {
+            **dict(r),
+            "thresholds": safe_json_load(r["thresholds"]) if r.get("thresholds") else None
+        }
+        for r in rows
+    ]
 
 def get_analysis_result(analysis_id: int):
     with engine_dummy_bps.begin() as conn:

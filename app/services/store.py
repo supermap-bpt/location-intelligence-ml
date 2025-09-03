@@ -62,17 +62,13 @@ def store_analysis_result(request: AnalysisResultRequest):
                 nama_layer,
                 lahan_kosong,
                 selected_facilites,
-                grid_geometries,
-                feature_scores,
-                weights_applied
+                clip_geometries
             )
             VALUES (
                 :nama_layer,
                 CAST(:lahan_kosong AS JSONB),
                 CAST(:selected_facilites AS JSONB),
-                CAST(:grid_geometries AS JSONB),
-                CAST(:feature_scores AS JSONB),
-                CAST(:weights_applied AS JSONB)
+                CAST(:clip_geometries AS JSONB)
             )
             RETURNING id
         """)
@@ -81,9 +77,7 @@ def store_analysis_result(request: AnalysisResultRequest):
             "nama_layer": request.nama_layer,
             "lahan_kosong": json.dumps(request.lahan_kosong),
             "selected_facilites": json.dumps(request.selected_facilites),
-            "grid_geometries": json.dumps(request.grid_geometries),
-            "feature_scores": json.dumps([g.get("feature_scores", {}) for g in request.grid_geometries]),
-            "weights_applied": json.dumps([g.get("weights_applied", {}) for g in request.grid_geometries]),
+            "clip_geometries": json.dumps(request.grid_geometries)  # ambil dari request lama, tapi masuk ke kolom baru
         })
         inserted_id = result.scalar_one()
         return {"message": "Analysis result stored successfully", "id": inserted_id}
