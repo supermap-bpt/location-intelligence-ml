@@ -1,25 +1,47 @@
-from fastapi import FastAPI, HTTPException
+import json
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from enum import Enum
 from typing import Dict, List, Tuple, Any, Optional
+from shapely import wkb
 from shapely.geometry import shape, mapping
+from shapely.ops import unary_union
 from datetime import datetime
 import geopandas as gpd
 import pandas as pd
 import numpy as np
 import joblib
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Query
+import json
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class GridData(BaseModel):
+    geometry_grid: Dict[str, Any]
+    feature_scores: Dict[str, float]
+    weights: Dict[str, float]
+
+class BatchRequest(BaseModel):
+    data: List[GridData]
+    low_range: float
+    high_range: float
 
 app = FastAPI()
 
 # Load model
-model = joblib.load("model/random_forest_model.pkl")
-MODEL_ACCURACY = 0.92
+model = joblib.load("model/random_forest_model_regressor.pkl")
+MEAN_ABSOLUTE_ERROR = 0.0412
+MEAN_SQUARED_ERROR = 0.0031
+ROOT_MEAN_SQUARED_ERROR = 0.0560
+R2_SCORE = 0.8643
 
 # Database configuration
-DATABASE_URL = "postgresql://postgres:HansAngela09@localhost:5432/batas_wilayah_indonesia"
-DATABASE_URL_DUMMY_BPS = "postgresql://postgres:HansAngela09@localhost:5432/dummy_bps"
+DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL_DUMMY_BPS = os.getenv("DATABASE_URL_DUMMY_BPS")
 engine = create_engine(DATABASE_URL)
 engine_dummy_bps = create_engine(DATABASE_URL_DUMMY_BPS)
 
@@ -35,7 +57,7 @@ class SuitabilityRequest(BaseModel):
     weights: Dict[str, Any]
 
 class BatchSuitabilityRequest(BaseModel):
-    geometry_grids: List[Dict]
+    geometry_grid: List[Dict]
     feature_scores: Dict[str, Any]
     weights: Dict[str, Any]
     grid_ids: Optional[List[str]] = None
@@ -43,7 +65,10 @@ class BatchSuitabilityRequest(BaseModel):
 class SuitabilityResponse(BaseModel):
     predicted_class: SuitabilityCategory
     confidence: float
-    model_accuracy: float
+    mean_absolute_error: float
+    mean_squared_error: float
+    root_mean_squared_error: float
+    r2_score: float
     feature_scores: Dict[str, float]
     weights_applied: Dict[str, float]
     input_polygon: List[List[Tuple[float, float]]]
@@ -55,6 +80,25 @@ class HealthCheckResponse(BaseModel):
     timestamp: str
     model_loaded: bool
     dependencies: dict
+
+class BufferRequest(BaseModel):
+    buffer_polygons: List[Any]
+    recommended_area: List[Any]
+class HotelItem(BaseModel):
+    nama: str
+    geometry: Optional[dict]
+
+class PendidikanItem(BaseModel):
+    namobj: str
+    geometry: Optional[dict]
+
+class PusatPerbelanjaanItem(BaseModel):
+    namobj: str
+    geometry: Optional[dict]
+
+class RumahSakitItem(BaseModel):
+    namobj: str
+    geometry: Optional[dict]
 
 # Label and feature mapping
 label_mapping = {
@@ -72,6 +116,12 @@ feature_map = {
     "poiarea": "poiarea",
     "road": "road",
     "slope": "slope"
+}
+
+FACILITY_CONFIG = {
+    "hotel": {"table": "Hotel_P", "name_col": "nama", "geom_col": "smgeometry"},
+    "rumah_sakit": {"table": "RumahSakit_P", "name_col": "nama", "geom_col": "smgeometry"},
+    "sekolah": {"table": "Sekolah_P", "name_col": "namobj", "geom_col": "smgeometry"},
 }
 
 # Helper functions
@@ -99,146 +149,278 @@ def get_intersect_value(gdf, polygon, score_col):
 
 # Data loading functions
 def get_siswa_putus_sekolah_geodataframe():
-    sql = "SELECT wadmkc, s_siswaputussekolah, ST_AsGeoJSON(geometry) as geojson FROM siswa_putus_sekolah WHERE geometry IS NOT NULL"
+    sql = "SELECT wadmkc, s_siswaputussekolah, ST_AsGeoJSON(smgeometry) as geojson FROM siswa_putus_sekolah WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_kemiskinan_geodataframe():
-    sql = "SELECT wadmkc, s_kemiskinan, ST_AsGeoJSON(geometry) as geojson FROM kemiskinan WHERE geometry IS NOT NULL"
+    sql = "SELECT wadmkc, s_kemiskinan, ST_AsGeoJSON(smgeometry) as geojson FROM kemiskinan WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_kepadatan_penduduk_geodataframe():
-    sql = "SELECT wadmkc, s_pddk, ST_AsGeoJSON(geometry) as geojson FROM kepadatan_penduduk WHERE geometry IS NOT NULL"
+    sql = "SELECT wadmkc, s_pddk, ST_AsGeoJSON(smgeometry) as geojson FROM kepadatan_penduduk WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_poi_geodataframe():
-    sql = "SELECT wadmkc, s_poi, ST_AsGeoJSON(geometry) as geojson FROM poi WHERE geometry IS NOT NULL"
+    sql = "SELECT wadmkc, s_poi, ST_AsGeoJSON(smgeometry) as geojson FROM poi WHERE smgeometry IS NOT NULL"
+    df = pd.read_sql_query(sql, con=engine_dummy_bps)
+    df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
+    return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
+
+def get_gdp_geodataframe():
+    sql = """SELECT wadmkc, pendapatan, ST_AsGeoJSON(smgeometry) as geojson FROM "pendapatan_per_kapita_R" WHERE smgeometry IS NOT NULL"""
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_kedekatan_sungai_geodataframe():
-    sql = "SELECT s_sungai, ST_AsGeoJSON(geometry) as geojson FROM kedekatan_sungai WHERE geometry IS NOT NULL"
+    sql = "SELECT s_sungai, ST_AsGeoJSON(smgeometry) as geojson FROM kedekatan_sungai WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_kedekatan_faskes_geodataframe():
-    sql = "SELECT s_faskes, ST_AsGeoJSON(geometry) as geojson FROM kedekatan_faskes WHERE geometry IS NOT NULL"
+    sql = "SELECT s_faskes, ST_AsGeoJSON(smgeometry) as geojson FROM kedekatan_faskes WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_kedekatan_jalan_geodataframe():
-    sql = "SELECT s_road, ST_AsGeoJSON(geometry) as geojson FROM jalan WHERE geometry IS NOT NULL"
+    sql = "SELECT s_road, ST_AsGeoJSON(smgeometry) as geojson FROM jalan WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 def get_slope_geodataframe():
-    sql = "SELECT s_slope, ST_AsGeoJSON(geometry) as geojson FROM slope WHERE geometry IS NOT NULL"
+    sql = "SELECT s_slope, ST_AsGeoJSON(smgeometry) as geojson FROM slope WHERE smgeometry IS NOT NULL"
     df = pd.read_sql_query(sql, con=engine_dummy_bps)
     df['geometry'] = df['geojson'].apply(lambda x: shape(eval(x) if isinstance(x, str) else x))
     return gpd.GeoDataFrame(df, geometry='geometry', crs="EPSG:4326")
 
 # Endpoints
-@app.post("/batch-predict", response_model=List[SuitabilityResponse])
-async def batch_predict_suitability(request: BatchSuitabilityRequest):
+@app.post("/batch-predict")
+async def batch_predict_suitability(request: BatchRequest):
     try:
-        # Validate weights
-        total_weight = 0.0
-        converted_weights = {}
-        for api_key in feature_map.keys():
-            if api_key not in request.weights:
-                raise HTTPException(status_code=400, detail=f"Missing weight key: {api_key}")
-            try:
-                weight = float(request.weights[api_key])
-                if weight < 0:
-                    raise ValueError(f"Weight for {api_key} must be non-negative")
-                converted_weights[api_key] = weight
-                total_weight += weight
-            except (ValueError, TypeError) as e:
-                raise HTTPException(status_code=400, detail=str(e))
+        # --- Step 0: preload GeoDataFrames once (hanya feature yang punya bobot > 0) ---
+        all_weights = {k for grid in request.data for k, w in grid.weights.items() if w > 0}
 
-        if not np.isclose(total_weight, 100.0, atol=1e-6):
-            raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
-
-        non_zero_features = {k for k, w in converted_weights.items() if w > 0}
-        
-        # Pre-load all needed GeoDataFrames
         gdfs = {
-            "siswa": get_siswa_putus_sekolah_geodataframe() if "jumlahsiswaputussekolah" in non_zero_features else None,
-            "kemiskinan": get_kemiskinan_geodataframe() if "kemiskinan" in non_zero_features else None,
-            "penduduk": get_kepadatan_penduduk_geodataframe() if "peopleden" in non_zero_features else None,
-            "poi": get_poi_geodataframe() if "poiarea" in non_zero_features else None,
-            "sungai": get_kedekatan_sungai_geodataframe() if "nearest_sungai" in non_zero_features else None,
-            "faskes": get_kedekatan_faskes_geodataframe() if "nearestfaskes" in non_zero_features else None,
-            "road": get_kedekatan_jalan_geodataframe() if "road" in non_zero_features else None,
-            "slope": get_slope_geodataframe() if "slope" in non_zero_features else None
+            "siswa": get_siswa_putus_sekolah_geodataframe() if "jumlahsiswaputussekolah" in all_weights else None,
+            "kemiskinan": get_kemiskinan_geodataframe() if "kemiskinan" in all_weights else None,
+            "penduduk": get_kepadatan_penduduk_geodataframe() if "peopleden" in all_weights else None,
+            "poi": get_poi_geodataframe() if "poiarea" in all_weights else None,
+            "sungai": get_kedekatan_sungai_geodataframe() if "nearest_sungai" in all_weights else None,
+            "faskes": get_kedekatan_faskes_geodataframe() if "nearestfaskes" in all_weights else None,
+            "road": get_kedekatan_jalan_geodataframe() if "road" in all_weights else None,
+            "slope": get_slope_geodataframe() if "slope" in all_weights else None,
+            "gdp": get_gdp_geodataframe(),
         }
 
-        results = []
-        for i, grid in enumerate(request.geometry_grids):
-            try:
-                polygon = shape(grid)
-                input_gdf = gpd.GeoDataFrame([{'geometry': polygon}], crs="EPSG:4326")
+        grid_scores = []
 
-                # Get values for each feature
-                cleaned_scores = {
-                    "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], polygon, 's_siswaputussekolah'),
-                    "kemiskinan": get_intersect_value(gdfs["kemiskinan"], polygon, 's_kemiskinan'),
-                    "peopleden": get_intersect_value(gdfs["penduduk"], polygon, 's_pddk'),
-                    "poiarea": get_intersect_value(gdfs["poi"], polygon, 's_poi'),
-                    "nearest_sungai": get_intersect_value(gdfs["sungai"], polygon, 's_sungai'),
-                    "nearestfaskes": get_intersect_value(gdfs["faskes"], polygon, 's_faskes'),
-                    "road": get_intersect_value(gdfs["road"], polygon, 's_road'),
-                    "slope": get_intersect_value(gdfs["slope"], polygon, 's_slope')
-                }
+        # --- Step 1: hitung GDP dulu ---
+        for grid_item in request.data:
+            polygon = shape(grid_item.geometry_grid)
 
-                # Prepare model input
-                model_input = {model_key: cleaned_scores[api_key] for api_key, model_key in feature_map.items()}
-                input_df = pd.DataFrame([model_input])
+            gdp_value = get_intersect_value(gdfs["gdp"], polygon, 'pendapatan') if gdfs["gdp"] is not None else None
 
-                # Predict
-                predicted_class = model.predict(input_df)[0]
-                predicted_probs = model.predict_proba(input_df)[0]
-                category = label_mapping.get(predicted_class, SuitabilityCategory.NEUTRAL)
-                class_index = list(model.classes_).index(predicted_class)
-                confidence = float(predicted_probs[class_index])
-                norm_weights = {k: round(v / 100.0, 4) for k, v in converted_weights.items()}
-
-                # Prepare response
-                result = {
-                    "predicted_class": category,
-                    "confidence": confidence,
-                    "model_accuracy": MODEL_ACCURACY,
-                    "feature_scores": cleaned_scores,
-                    "weights_applied": norm_weights,
-                    "input_polygon": extract_coordinates(grid),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # Add grid_id if provided
-                if request.grid_ids and i < len(request.grid_ids):
-                    result["grid_id"] = request.grid_ids[i]
-
-                results.append(result)
-                
-            except Exception as e:
-                print(f"Error processing grid {i}: {str(e)}")
+            # kalau GDP tidak valid / di luar range -> langsung kategori low
+            if gdp_value is None or not (request.low_range <= gdp_value <= request.high_range):
+                grid_scores.append({
+                    "geometry": grid_item.geometry_grid,
+                    "grid_value": 0.0,   # ga usah hitung
+                    "gdp": gdp_value,
+                    "category": "low"
+                })
                 continue
 
-        return results
+            # --- Step 2: baru hitung feature lain kalau GDP lolos filter ---
+            weights = grid_item.weights
 
-    except HTTPException:
-        raise
+            feature_scores = {
+                "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], polygon, 's_siswaputussekolah') if gdfs["siswa"] is not None else 0.0,
+                "kemiskinan": get_intersect_value(gdfs["kemiskinan"], polygon, 's_kemiskinan') if gdfs["kemiskinan"] is not None else 0.0,
+                "peopleden": get_intersect_value(gdfs["penduduk"], polygon, 's_pddk') if gdfs["penduduk"] is not None else 0.0,
+                "poiarea": get_intersect_value(gdfs["poi"], polygon, 's_poi') if gdfs["poi"] is not None else 0.0,
+                "nearest_sungai": get_intersect_value(gdfs["sungai"], polygon, 's_sungai') if gdfs["sungai"] is not None else 0.0,
+                "nearestfaskes": get_intersect_value(gdfs["faskes"], polygon, 's_faskes') if gdfs["faskes"] is not None else 0.0,
+                "road": get_intersect_value(gdfs["road"], polygon, 's_road') if gdfs["road"] is not None else 0.0,
+                "slope": get_intersect_value(gdfs["slope"], polygon, 's_slope') if gdfs["slope"] is not None else 0.0,
+            }
+
+            # validate weight sum
+            total_weight = sum(weights.values())
+            if not np.isclose(total_weight, 100.0, atol=1e-6):
+                raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
+
+            # weighted sum = grid_value
+            grid_value = sum(feature_scores.get(k, 0.0) * (weights.get(k, 0.0) / 100.0) for k in weights)
+
+            grid_scores.append({
+                "geometry": grid_item.geometry_grid,
+                "grid_value": grid_value,
+                "gdp": gdp_value,
+                "category": None  # klasifikasi nanti
+            })
+
+        # --- Step 3: thresholds (hanya pakai grid yg punya nilai) ---
+        unique_scores = sorted(set(gs["grid_value"] for gs in grid_scores if gs["category"] is None))
+        n_unique = len(unique_scores)
+
+        thresholds = {}
+        if n_unique == 1:
+            thresholds = {"high": [unique_scores[0], 1e10]}  # Use large finite number instead of inf
+        elif n_unique == 2:
+            thresholds = {
+                "medium": [unique_scores[0], unique_scores[0]],
+                "high": [unique_scores[0] + 1, unique_scores[1]]
+            }
+        elif n_unique == 3:
+            thresholds = {
+                "low": [unique_scores[0], unique_scores[0]],
+                "medium": [unique_scores[1], unique_scores[1]],
+                "high": [unique_scores[1] + 1, unique_scores[2]]
+            }
+        elif n_unique >= 4:
+            thresholds = {
+                "low": [unique_scores[0], unique_scores[1]],
+                "medium": [unique_scores[1], unique_scores[2]],
+                "high": [unique_scores[2] + 1, unique_scores[3]]
+            }
+
+        # --- Step 4: assign category untuk yg lolos GDP ---
+        results = []
+        for gs in grid_scores:
+            if gs["category"] == "low":  # udah ditandai karena GDP gagal
+                results.append({
+                    "geometry_grid": gs["geometry"],
+                    "grid_value": gs["grid_value"],
+                    "category": "low"
+                })
+                continue
+
+            val = gs["grid_value"]
+            category = None
+
+            if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
+                category = "low"
+            elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
+                category = "medium"
+            elif "high" in thresholds and val >= thresholds["high"][0]:
+                category = "high"
+
+            # fallback supaya ga pernah null
+            if category is None:
+                category = "medium"
+
+            results.append({
+                "geometry_grid": gs["geometry"],
+                "grid_value": gs["grid_value"],
+                "category": category
+            })
+
+        return {
+            "data": results,
+            "thresholds": thresholds,
+            "low_range": request.low_range,
+            "high_range": request.high_range
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+# --- Get Facilities Data ---
+@app.get("/facilities")
+def get_facilities(types: str = Query(..., description="Comma-separated facility types (e.g. hotel,sekolah)")):
+    try:
+        dfs = []
+        requested_types = [t.strip().lower() for t in types.split(",")]
+
+        for ftype in requested_types:
+            if ftype not in FACILITY_CONFIG:
+                raise HTTPException(status_code=400, detail=f"Unknown facility type: {ftype}")
+
+            config = FACILITY_CONFIG[ftype]
+            q = f"""
+                SELECT smid as id, {config['name_col']} as nama, '{ftype}' as type,
+                       ST_Y({config['geom_col']}) as latitude,
+                       ST_X({config['geom_col']}) as longitude
+                FROM "{config['table']}"
+            """
+            dfs.append(pd.read_sql_query(q, con=engine_dummy_bps))
+
+        if not dfs:
+            return []
+
+        df = pd.concat(dfs, ignore_index=True)
+        return df.to_dict(orient="records")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Buffer Result ---
+@app.post("/buffer-result")
+def buffer_result(req: BufferRequest):
+    # --- Step 1: Convert inputs to Shapely ---
+    buffer_shapes = [shape(p) for p in req.buffer_polygons]
+    recommended_shapes = [shape(p) for p in req.recommended_area]
+
+    # Merge buffer polygons into one geometry
+    buffer_union = unary_union(buffer_shapes)
+
+    # Crop recommended areas (remove overlaps with buffer)
+    cropped = [r.difference(buffer_union) for r in recommended_shapes if not r.is_empty]
+
+    # --- Step 2: Fetch LahanKosong_P filtered by cropped polygons ---
+    lahan_kosong = []
+    with engine_dummy_bps.connect() as conn:
+        for c in cropped:
+            if c.is_empty:
+                continue
+
+            # Convert cropped polygon to WKT
+            cropped_wkt = c.wkt  
+
+            query = text("""
+                SELECT smid, smuserid, ST_AsGeoJSON(smgeometry) as geometry,
+                       userid, namobj, remark, kdprov, kdkab, kdkec,
+                       nmprov, nmkab, nmkec, region_code
+                FROM "LahanKosong_P"
+                WHERE ST_Intersects(
+                    smgeometry,
+                    ST_GeomFromText(:cropped_wkt, 4326)
+                );
+            """)
+
+            result = conn.execute(query, {"cropped_wkt": cropped_wkt}).fetchall()
+
+            for row in result:
+                lahan_kosong.append({
+                    "smid": row.smid,
+                    "smuserid": row.smuserid,
+                    "geometry": json.loads(row.geometry),
+                    "userid": row.userid,
+                    "namobj": row.namobj,
+                    "remark": row.remark,
+                    "kdprov": row.kdprov,
+                    "kdkab": row.kdkab,
+                    "kdkec": row.kdkec,
+                    "nmprov": row.nmprov,
+                    "nmkab": row.nmkab,
+                    "nmkec": row.nmkec,
+                    "region_code": row.region_code
+                })
+
+    # --- Step 3: Return cropped polygons & lahan kosong ---
+    return {
+        "cropped_polygons": [mapping(c) for c in cropped if not c.is_empty],
+        "lahan_kosong": lahan_kosong
+    }
 
 # --- Health Check ---
 @app.get("/health", response_model=HealthCheckResponse)
@@ -262,16 +444,25 @@ async def health_check():
 @app.get("/provinsi")
 def get_provinsi():
     try:
+        # Ambil geom + latitude & longitude dari PostGIS
         df = pd.read_sql_query(
-            "SELECT kode_provinsi, nama_provinsi, latitude, longitude, rings FROM dataset_wilayah_indonesia.provinsi",
+            """
+            SELECT
+                kode_provinsi,
+                nama_provinsi,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM provinsi
+            """,
             con=engine
         )
 
         result = []
         for _, row in df.iterrows():
-            # Asumsikan rings disimpan sebagai stringified list
             try:
-                rings = eval(row["rings"])  # pastikan isinya list of coordinates
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -292,8 +483,13 @@ def get_provinsi():
 def get_kota_kabupaten(kode_provinsi: str):
     try:
         query = """
-            SELECT kode_kota_kabupaten, nama_kota_kabupaten, latitude, longitude, rings
-            FROM dataset_wilayah_indonesia.kota_kabupaten
+            SELECT
+                kode_kota_kabupaten,
+                nama_kota_kabupaten,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM kota_kabupaten
             WHERE kode_provinsi = %(kode_provinsi)s
         """
         df = pd.read_sql_query(query, con=engine, params={"kode_provinsi": kode_provinsi})
@@ -301,7 +497,8 @@ def get_kota_kabupaten(kode_provinsi: str):
         result = []
         for _, row in df.iterrows():
             try:
-                rings = eval(row["rings"])
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -318,12 +515,18 @@ def get_kota_kabupaten(kode_provinsi: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/kecamatan")
 def get_kecamatan(kode_kota_kabupaten: str):
     try:
         query = """
-            SELECT kode_kecamatan, nama_kecamatan, latitude, longitude, rings
-            FROM dataset_wilayah_indonesia.kecamatan
+            SELECT
+                kode_kecamatan,
+                nama_kecamatan,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM kecamatan
             WHERE kode_kota_kabupaten = %(kode_kota_kabupaten)s
         """
         df = pd.read_sql_query(query, con=engine, params={"kode_kota_kabupaten": kode_kota_kabupaten})
@@ -331,7 +534,8 @@ def get_kecamatan(kode_kota_kabupaten: str):
         result = []
         for _, row in df.iterrows():
             try:
-                rings = eval(row["rings"])
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -348,12 +552,17 @@ def get_kecamatan(kode_kota_kabupaten: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/kelurahan")
+@app.get("/kelurahan-desa")
 def get_kelurahan(kode_kecamatan: str):
     try:
         query = """
-            SELECT kode_kelurahan, nama_kelurahan, latitude, longitude, rings
-            FROM dataset_wilayah_indonesia.kelurahan
+            SELECT
+                kode_kelurahan_desa AS kode_kelurahan,
+                nama_kelurahan_desa AS nama_kelurahan,
+                latitude,
+                longitude,
+                ST_AsGeoJSON(geom) AS geom_json
+            FROM kelurahan_desa
             WHERE kode_kecamatan = %(kode_kecamatan)s
         """
         df = pd.read_sql_query(query, con=engine, params={"kode_kecamatan": kode_kecamatan})
@@ -361,7 +570,8 @@ def get_kelurahan(kode_kecamatan: str):
         result = []
         for _, row in df.iterrows():
             try:
-                rings = eval(row["rings"])
+                geom_obj = json.loads(row["geom_json"])
+                rings = geom_obj.get("coordinates", [])
             except Exception:
                 rings = []
 
@@ -378,7 +588,190 @@ def get_kelurahan(kode_kecamatan: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ✅ Tambahkan ini setelah app dibuat
+@app.get("/get-hotel", response_model=List[HotelItem])
+def get_hotel(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple, dipisah koma)")):
+    try:
+        # Pisahkan kecamatan berdasarkan koma, hilangkan spasi
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+
+        if not kecamatan_list:
+            raise HTTPException(
+                status_code=400,
+                detail="Minimal satu nama kecamatan harus disediakan"
+            )
+
+        query = text("""
+            SELECT nama, smgeometry
+            FROM "Hotel_P"
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
+        """)
+
+        with engine_dummy_bps.connect() as conn:
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
+
+        hotels_list = []
+        for nama, geom_wkb in results:
+            geom_geojson = None
+            if geom_wkb:
+                if isinstance(geom_wkb, memoryview):
+                    geom_bytes = geom_wkb.tobytes()
+                elif isinstance(geom_wkb, str):
+                    geom_bytes = bytes.fromhex(geom_wkb)
+                elif isinstance(geom_wkb, bytes):
+                    geom_bytes = geom_wkb
+                else:
+                    raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
+                shapely_geom = wkb.loads(geom_bytes)
+                geom_geojson = mapping(shapely_geom)
+
+            hotels_list.append({
+                "nama": nama,
+                "geometry": geom_geojson
+            })
+
+        return hotels_list
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/get-pendidikan", response_model=List[PendidikanItem])
+def get_pendidikan(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple, dipisah koma)")):
+    try:
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+
+        if not kecamatan_list:
+            raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
+
+        query = text("""
+            SELECT namobj, smgeometry
+            FROM "Sekolah_P"
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
+        """)
+
+        with engine_dummy_bps.connect() as conn:
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
+
+        pendidikan_list = []
+        for namobj, geom_wkb in results:
+            geom_geojson = None
+            if geom_wkb:
+                if isinstance(geom_wkb, memoryview):
+                    geom_bytes = geom_wkb.tobytes()
+                elif isinstance(geom_wkb, str):
+                    geom_bytes = bytes.fromhex(geom_wkb)
+                elif isinstance(geom_wkb, bytes):
+                    geom_bytes = geom_wkb
+                else:
+                    raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
+                shapely_geom = wkb.loads(geom_bytes)
+                geom_geojson = mapping(shapely_geom)
+
+            pendidikan_list.append({
+                "namobj": namobj,
+                "geometry": geom_geojson
+            })
+
+        return pendidikan_list
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/get-pusatperbelanjaan", response_model=List[PusatPerbelanjaanItem])
+def get_pusatperbelanjaan(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple, dipisah koma)")):
+    try:
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+
+        if not kecamatan_list:
+            raise HTTPException(status_code=400, detail="Minimal satu nama kecamatan harus disediakan")
+
+        query = text("""
+            SELECT namobj, smgeometry
+            FROM "PusatPerbelanjaan_P"
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
+        """)
+
+        with engine_dummy_bps.connect() as conn:
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
+
+        pusatperbelanjaan_list = []
+        for namobj, geom_wkb in results:
+            if namobj is None:
+                continue  # skip kalau nama objek kosong
+
+            geom_geojson = None
+            if geom_wkb:
+                if isinstance(geom_wkb, memoryview):
+                    geom_bytes = geom_wkb.tobytes()
+                elif isinstance(geom_wkb, str):
+                    geom_bytes = bytes.fromhex(geom_wkb)
+                elif isinstance(geom_wkb, bytes):
+                    geom_bytes = geom_wkb
+                else:
+                    raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
+                shapely_geom = wkb.loads(geom_bytes)
+                geom_geojson = mapping(shapely_geom)
+
+            pusatperbelanjaan_list.append({
+                "namobj": namobj,
+                "geometry": geom_geojson
+            })
+
+        return pusatperbelanjaan_list
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/get-rumahsakit", response_model=List[RumahSakitItem])
+def get_rumahsakit(nmkec: str = Query(..., description="Nama kecamatan (bisa multiple dipisah koma)")):
+    """
+    Ambil daftar rumah sakit berdasarkan nama kecamatan (bisa multiple)
+    """
+    try:
+        # Split multiple kecamatan names
+        kecamatan_list = [k.strip() for k in nmkec.split(",") if k.strip()]
+        
+        if not kecamatan_list:
+            raise HTTPException(
+                status_code=400,
+                detail="Minimal satu nama kecamatan harus disediakan"
+            )
+
+        # Build query with IN clause
+        query = text("""
+            SELECT namobj, smgeometry
+            FROM "RumahSakit_P"
+            WHERE LOWER(nmkec) IN (SELECT LOWER(UNNEST(:nmkec_list)))
+        """)
+
+        with engine_dummy_bps.connect() as conn:
+            results = conn.execute(query, {"nmkec_list": kecamatan_list}).fetchall()
+
+        rumah_sakit_list = []
+        for namobj, geom_wkb in results:
+            geom_geojson = None
+            if geom_wkb:
+                if isinstance(geom_wkb, memoryview):
+                    geom_bytes = geom_wkb.tobytes()
+                elif isinstance(geom_wkb, str):
+                    geom_bytes = bytes.fromhex(geom_wkb)
+                elif isinstance(geom_wkb, bytes):
+                    geom_bytes = geom_wkb
+                else:
+                    raise TypeError(f"Tipe geometry tidak dikenal: {type(geom_wkb)}")
+
+                shapely_geom = wkb.loads(geom_bytes)
+                geom_geojson = mapping(shapely_geom)
+
+            rumah_sakit_list.append({
+                "namobj": namobj,
+                "geometry": geom_geojson
+            })
+
+        return rumah_sakit_list
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
