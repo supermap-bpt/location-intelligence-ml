@@ -8,7 +8,7 @@ class SuitabilityCategory(str, Enum):
     RECOMMENDED = "high"
 
 class SuitabilityResponse(BaseModel):
-    predicted_class: SuitabilityCategory
+    predicted_class: str
     grid_value: float
     feature_scores: Dict[str, float]
     weights_applied: Dict[str, float]
