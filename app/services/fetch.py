@@ -83,12 +83,12 @@ def _fetch_kecamatan_features_by_codes(codes: List[str]) -> Dict[str, Dict]:
 # =========================
 # Facilities config (engine_dummy_bps)
 # =========================
-# Map each facility to (schema, table, geom_col, kec_code_col)
+# Map each facility to (schema, table, geom_col, kec_name_col_in_poi)
 _FACILITY_TABLES = {
-    "sekolah": ("public", "Sekolah_P", "smgeometry", "kdkec"),
-    "hotel": ("public", "Hotel_P", "smgeometry", "kdkec"),
-    "pusatperbelanjaan": ("public", "PusatPerbelanjaan_P", "smgeometry", "kdkec"),
-    "rumahsakit": ("public", "RumahSakit_P", "smgeometry", "kdkec"),
+    "sekolah": ("public", "Sekolah_P", "smgeometry", "nmkec"),
+    "hotel": ("public", "Hotel_P", "smgeometry", "nmkec"),
+    "pusatperbelanjaan": ("public", "PusatPerbelanjaan_P", "smgeometry", "nmkec"),
+    "rumahsakit": ("public", "RumahSakit_P", "smgeometry", "nmkec"),
 }
 
 
@@ -98,8 +98,11 @@ _FACILITY_TABLES = {
 
 def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]) -> Optional[List[Dict]]:
     """
-    Fast path: filter POI by its kecamatan code column (e.g., kdkec).
-    Returns a *list* of GeoJSON Feature dicts (NOT a FeatureCollection).
+    Filter POI by *kecamatan name*:
+      public.kecamatan.nama_kecamatan  (engine)
+        ↔ POI.{nmkec}                  (engine_dummy_bps)
+
+    Returns a list of GeoJSON Feature dicts (NOT a FeatureCollection).
     """
     if not facility_key or not codes:
         return None
@@ -108,25 +111,53 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
     if not fac:
         return None
 
-    fac_schema, fac_table, geom_col, kec_col = fac
+    fac_schema, fac_table, geom_col, poi_kec_name_col = fac
     fac_fqtn = _qident(fac_schema, fac_table)
 
-    # dedupe and keep non-empty strings
-    kdkec_codes = sorted({c for c in codes if c})
+    # 1) Get the kecamatan *names* for the provided codes from the admin DB (engine)
+    adm_schema, adm_table = _ADMIN_BOUNDS
+    adm_fqtn = _qident(adm_schema, adm_table)
 
+    unique_codes = sorted({c for c in codes if c})
+
+    with engine.begin() as conn:
+        name_rows = conn.execute(text(f"""
+            SELECT
+                { _ADMIN_CODE_COL } AS kode_kecamatan,
+                nama_kecamatan
+            FROM {adm_fqtn}
+            WHERE { _ADMIN_CODE_COL } = ANY(:codes)
+        """), {"codes": unique_codes}).mappings().all()
+
+    if not name_rows:
+        return []
+
+    # Normalize names to UPPER for robust comparison
+    nmkec_names = sorted({
+        (r["nama_kecamatan"] or "").strip().upper()
+        for r in name_rows
+        if r.get("nama_kecamatan")
+    })
+
+    if not nmkec_names:
+        return []
+
+    # 2) Query POI by kecamatan name (on engine_dummy_bps)
+    # Use UPPER() on the POI side and compare with the pre-uppercased list
     sql = f"""
         SELECT
-            f.{kec_col}                AS _kode_kecamatan_filter,
-            ST_AsGeoJSON(f.{geom_col}) AS _geom_geojson,
+            -- Echo the matched POI name column as the filter key
+            f.{poi_kec_name_col}        AS _nama_kecamatan_filter,
+            ST_AsGeoJSON(f.{geom_col})  AS _geom_geojson,
             f.*
         FROM {fac_fqtn} AS f
-        WHERE f.{kec_col} = ANY(:kdkec_codes)
+        WHERE UPPER(f.{poi_kec_name_col}) = ANY(:nmkec_names)
     """
 
     with engine_dummy_bps.begin() as conn:
         rows = conn.execute(
             text(sql),
-            {"kdkec_codes": kdkec_codes},
+            {"nmkec_names": nmkec_names},
         ).mappings().all()
 
     features: List[Dict[str, Any]] = []
@@ -135,10 +166,9 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
         if not gj:
             continue
         props = {k: v for k, v in r.items() if k != "_geom_geojson"}
-        features.append(_feature(gj, props))  # each facility as a GeoJSON Feature
+        features.append(_feature(gj, props))
 
     return features
-
 
 # =========================
 # Public API functions
