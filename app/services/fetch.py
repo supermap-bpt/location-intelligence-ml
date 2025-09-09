@@ -265,7 +265,19 @@ def get_analysis_result(analysis_id: int):
     if not r:
         return {"message": "Analysis result not found"}
 
-    return {k: (safe_json_load(v) if isinstance(v, str) else v) for k, v in dict(r).items()}
+    # Extract kode_kecamatan from the result
+    codes = [str(c) for c in (safe_json_load(r["kode_kecamatan"]) or [])]
+    
+    # Fetch kecamatan features
+    code_to_feature = _fetch_kecamatan_features_by_codes(codes)
+    
+    # Build the response
+    response = {
+        **{k: (safe_json_load(v) if isinstance(v, str) else v) for k, v in dict(r).items()},
+        "kecamatan_regions": _feature_collection([code_to_feature[c] for c in codes if c in code_to_feature])
+    }
+
+    return response
 
 
 def get_all_analysis_results():
