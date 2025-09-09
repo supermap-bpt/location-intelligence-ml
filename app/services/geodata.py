@@ -23,6 +23,7 @@ def get_provinsi_service():
                         longitude,
                         ST_AsGeoJSON(geom) AS geom_json
                     FROM provinsi
+                    ORDER BY nama_provinsi ASC
                 """)
             ).fetchall()
 
@@ -62,6 +63,7 @@ def get_kota_kabupaten_service(kode_provinsi: str):
                         ST_AsGeoJSON(geom) AS geom_json
                     FROM kota_kabupaten
                     WHERE kode_provinsi = :kode_prov
+                    ORDER BY nama_kota_kabupaten ASC
                 """),
                 {"kode_prov": kode_provinsi}
             ).fetchall()
@@ -102,6 +104,7 @@ def get_kecamatan_service(kode_kota_kabupaten: str):
                         ST_AsGeoJSON(geom) AS geom_json
                     FROM kecamatan
                     WHERE kode_kota_kabupaten = :kode_kota
+                    ORDER BY nama_kecamatan ASC
                 """),
                 {"kode_kota": kode_kota_kabupaten}
             ).fetchall()
@@ -142,6 +145,7 @@ def get_kelurahan_service(kode_kecamatan: str):
                         ST_AsGeoJSON(geom) AS geom_json
                     FROM kelurahan_desa
                     WHERE kode_kecamatan = :kode_kec
+                    ORDER BY nama_kelurahan ASC
                 """),
                 {"kode_kec": kode_kecamatan}
             ).fetchall()
