@@ -10,12 +10,27 @@ from app.database import engine_dummy_bps, engine
 # Helpers & Config
 # =========================
 
-def safe_json_load(value):
-    if isinstance(value, (dict, list)):
-        return value
+def safe_json_load(value: Any) -> Optional[Any]:
+    """
+    Safely parse JSON from string, returning original value if parsing fails.
+    Handles empty strings, None values, and invalid JSON.
+    """
     if value is None:
         return None
-    return json.loads(value)
+    
+    if isinstance(value, str):
+        # Handle empty strings
+        if not value.strip():
+            return None
+        
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            # Return original string if it's not valid JSON
+            return value
+    
+    # Return non-string values as-is
+    return value
 
 
 def _feature(geometry_geojson: str, properties: Dict) -> Dict:
