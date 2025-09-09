@@ -17,7 +17,7 @@ METRICS = {
 }
 
 FACILITY_CONFIG = {
-    "hotel": {"table": "Hotel_P", "name_col": "nama", "geom_col": "smgeometry"},
+    "hotel": {"table": "Hotel_P", "name_col": "namobj", "geom_col": "smgeometry"},
     "rumah_sakit": {"table": "RumahSakit_P", "name_col": "namobj", "geom_col": "smgeometry"},
     "sekolah": {"table": "Sekolah_P", "name_col": "namobj", "geom_col": "smgeometry"},
     "pusat_perbelanjaan": {"table": "PusatPerbelanjaan_P", "name_col": "namobj", "geom_col": "smgeometry"}

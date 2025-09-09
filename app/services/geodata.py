@@ -219,7 +219,7 @@ def get_hotels_service(nmkec: List[str]):
         kecamatan_list = [k.strip().lower() for k in nmkec if k.strip()]
         
         query = text("""
-            SELECT nama, ST_AsGeoJSON(smgeometry)::json AS geometry
+            SELECT namobj, ST_AsGeoJSON(smgeometry)::json AS geometry
             FROM "Hotel_P"
             WHERE LOWER(nmkec) = ANY(:nmkec_list)
         """)
