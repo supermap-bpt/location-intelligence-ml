@@ -60,12 +60,14 @@ def store_analysis_result(request: AnalysisResultRequest):
         query = text("""
             INSERT INTO analysis_results (
                 nama_layer,
+                kode_kecamatan,
                 lahan_kosong,
                 selected_facilites,
                 clip_geometries
             )
             VALUES (
                 :nama_layer,
+                CAST(:kode_kecamatan AS JSONB),
                 CAST(:lahan_kosong AS JSONB),
                 CAST(:selected_facilites AS JSONB),
                 CAST(:clip_geometries AS JSONB)
@@ -75,6 +77,7 @@ def store_analysis_result(request: AnalysisResultRequest):
 
         result = conn.execute(query, {
             "nama_layer": request.nama_layer,
+            "kode_kecamatan": json.dumps(request.kode_kecamatan),
             "lahan_kosong": json.dumps(request.lahan_kosong),
             "selected_facilites": json.dumps(request.selected_facilites),
             "clip_geometries": json.dumps(request.grid_geometries)  # ambil dari request lama, tapi masuk ke kolom baru
