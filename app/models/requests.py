@@ -13,6 +13,7 @@ class BatchRequest(BaseModel):
 class BufferRequest(BaseModel):
     buffer_polygons: List[Any]
     recommended_area: List[Any]
+    luas_area: Optional[float] = 0
 
 class Facility(BaseModel):
     id: int

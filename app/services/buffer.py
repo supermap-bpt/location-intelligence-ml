@@ -24,7 +24,6 @@ def buffer_result_service(req: BufferRequest):
             if c.is_empty:
                 continue
 
-            # Convert cropped polygon to WKT
             cropped_wkt = c.wkt  
 
             query = text("""
@@ -35,10 +34,14 @@ def buffer_result_service(req: BufferRequest):
                 WHERE ST_Intersects(
                     smgeometry,
                     ST_GeomFromText(:cropped_wkt, 4326)
-                );
+                )
+                AND luas >= :luas_area;
             """)
 
-            result = conn.execute(query, {"cropped_wkt": cropped_wkt}).fetchall()
+            result = conn.execute(query, {
+                "cropped_wkt": cropped_wkt,
+                "luas_area": req.luas_area or 0
+            }).fetchall()
 
             for row in result:
                 lahan_kosong.append({
