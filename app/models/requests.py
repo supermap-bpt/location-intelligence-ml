@@ -44,3 +44,6 @@ class AnalysisResultRequest(BaseModel):
     lahan_kosong: List[Dict[str, Any]]
     selected_facilites: List[Dict[str, Any]]
     grid_geometries: List[Dict[str, Any]]
+    grid_layer_name: Optional[str] = None
+    ukuran_buffer: Optional[float] = None
+    selected_fasilitas: Optional[str] = None

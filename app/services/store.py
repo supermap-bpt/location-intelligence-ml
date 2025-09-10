@@ -63,14 +63,20 @@ def store_analysis_result(request: AnalysisResultRequest):
                 kode_kecamatan,
                 lahan_kosong,
                 selected_facilites,
-                clip_geometries
+                clip_geometries,
+                grid_layer_name,
+                ukuran_buffer,
+                selected_fasilitas
             )
             VALUES (
                 :nama_layer,
                 CAST(:kode_kecamatan AS JSONB),
                 CAST(:lahan_kosong AS JSONB),
                 CAST(:selected_facilites AS JSONB),
-                CAST(:clip_geometries AS JSONB)
+                CAST(:clip_geometries AS JSONB),
+                :grid_layer_name,
+                :ukuran_buffer,
+                :selected_fasilitas
             )
             RETURNING id
         """)
@@ -80,7 +86,10 @@ def store_analysis_result(request: AnalysisResultRequest):
             "kode_kecamatan": json.dumps(request.kode_kecamatan),
             "lahan_kosong": json.dumps(request.lahan_kosong),
             "selected_facilites": json.dumps(request.selected_facilites),
-            "clip_geometries": json.dumps(request.grid_geometries)  # ambil dari request lama, tapi masuk ke kolom baru
+            "clip_geometries": json.dumps(request.grid_geometries),
+            "grid_layer_name": request.grid_layer_name,
+            "ukuran_buffer": request.ukuran_buffer,
+            "selected_fasilitas": request.selected_fasilitas
         })
         inserted_id = result.scalar_one()
         return {"message": "Analysis result stored successfully", "id": inserted_id}
