@@ -30,8 +30,8 @@ def buffer_result_service(req: BufferRequest):
             query = text("""
                 SELECT smid, smuserid, ST_AsGeoJSON(smgeometry) as geometry,
                        userid, namobj, remark, kdprov, kdkab, kdkec,
-                       nmprov, nmkab, nmkec, region_code
-                FROM "LahanKosong_P"
+                       nmprov, nmkab, nmkec, region_code, luas, x_centroid, y_centroid
+                FROM "LahanKosong_Area"
                 WHERE ST_Intersects(
                     smgeometry,
                     ST_GeomFromText(:cropped_wkt, 4326)
@@ -54,7 +54,10 @@ def buffer_result_service(req: BufferRequest):
                     "nmprov": row.nmprov,
                     "nmkab": row.nmkab,
                     "nmkec": row.nmkec,
-                    "region_code": row.region_code
+                    "region_code": row.region_code,
+                    "luas": row.luas,
+                    "x_centroid": row.x_centroid,
+                    "y_centroid": row.y_centroid
                 })
 
     # --- Step 3: Return cropped polygons & lahan kosong ---
