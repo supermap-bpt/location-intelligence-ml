@@ -93,6 +93,46 @@ def _fetch_kecamatan_features_by_codes(codes: List[str]) -> Dict[str, Dict]:
         )
         for r in rows
     }
+    
+    # =========================
+# Helpers: lookup names by kode
+# =========================
+
+def _get_provinsi_name(kode_provinsi: str) -> Optional[str]:
+    if not kode_provinsi:
+        return None
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+            SELECT nama_provinsi
+            FROM public.provinsi
+            WHERE kode_provinsi = :kode
+        """), {"kode": kode_provinsi}).mappings().first()
+    return row["nama_provinsi"] if row else None
+
+
+def _get_kota_kabupaten_name(kode_kota_kabupaten: str) -> Optional[str]:
+    if not kode_kota_kabupaten:
+        return None
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+            SELECT nama_kota_kabupaten
+            FROM public.kota_kabupaten
+            WHERE kode_kota_kabupaten = :kode
+        """), {"kode": kode_kota_kabupaten}).mappings().first()
+    return row["nama_kota_kabupaten"] if row else None
+
+
+def _get_kecamatan_names(codes: List[str]) -> Dict[str, str]:
+    """Return dict {kode_kecamatan: nama_kecamatan}"""
+    if not codes:
+        return {}
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT kode_kecamatan, nama_kecamatan
+            FROM public.kecamatan
+            WHERE kode_kecamatan = ANY(:codes)
+        """), {"codes": codes}).mappings().all()
+    return {r["kode_kecamatan"]: r["nama_kecamatan"] for r in rows}
 
 
 # =========================
@@ -192,6 +232,7 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
 def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
     """
     Fetch a single grid score record (from engine_dummy_bps) and enrich response with:
+      - provinsi, kota/kabupaten, kecamatan (kode + nama)
       - kecamatan polygon FeatureCollection (from engine)
       - optional facilities list (array of GeoJSON Features) filtered by kdkec (from engine_dummy_bps)
     """
@@ -205,32 +246,55 @@ def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
     if not r:
         return {"message": "Grid score not found"}
 
+    # Parse kode
+    kode_provinsi = r.get("kode_provinsi")
+    kode_kota = r.get("kode_kota_kabupaten")
     codes = [str(c) for c in (safe_json_load(r["kode_kecamatan"]) or [])]
+
+    # Ambil nama dari engine
+    provinsi_name = _get_provinsi_name(kode_provinsi)
+    kota_name = _get_kota_kabupaten_name(kode_kota)
+    kecamatan_names = _get_kecamatan_names(codes)
+
+    # Fetch polygons
     code_to_feature = _fetch_kecamatan_features_by_codes(codes)
 
     response: Dict[str, Any] = {
         "id": r["id"],
         "nama_layer": r["nama_layer"],
-        "kode_provinsi": r["kode_provinsi"],
-        "kode_kota_kabupaten": r["kode_kota_kabupaten"],
-        "kode_kecamatan": codes,
+        "provinsi": {
+            "kode_provinsi": kode_provinsi,
+            "nama_provinsi": provinsi_name,
+        },
+        "kota_kabupaten": {
+            "kode_kota_kabupaten": kode_kota,
+            "nama_kota_kabupaten": kota_name,
+        },
+        "kecamatan": [
+            {
+                "kode_kecamatan": c,
+                "nama_kecamatan": kecamatan_names.get(c, c)
+            }
+            for c in codes
+        ],
         "thresholds": safe_json_load(r["thresholds"]),
         "low_range_gdp": r["low_range_gdp"],
         "high_range_gdp": r["high_range_gdp"],
         "grid_geometries": safe_json_load(r["grid_geometries"]),
         "feature_scores": safe_json_load(r["feature_scores"]),
         "weights_applied": safe_json_load(r["weights_applied"]),
-        "kecamatan_regions": _feature_collection([code_to_feature[c] for c in codes if c in code_to_feature]),
+        "kecamatan_regions": _feature_collection(
+            [code_to_feature[c] for c in codes if c in code_to_feature]
+        ),
         "created_at": r["created_at"],
     }
 
     facilities_list = _fetch_facilities_in_kecamatan(codes, facility_key)
     if facilities_list is not None:
         response["facility_requested"] = facility_key
-        response["facilities"] = facilities_list  # plain array (not FeatureCollection)
+        response["facilities"] = facilities_list
 
     return response
-
 
 def get_all_grid_scores():
     with engine_dummy_bps.begin() as conn:
@@ -240,19 +304,47 @@ def get_all_grid_scores():
                 nama_layer,
                 kode_provinsi,
                 kode_kota_kabupaten,
+                kode_kecamatan,
                 thresholds,
                 created_at
             FROM grid_scores
             ORDER BY created_at DESC, id DESC
         """)).mappings().all()
 
-    return [
-        {
-            **dict(r),
-            "thresholds": safe_json_load(r["thresholds"]) if r.get("thresholds") else None
-        }
-        for r in rows
-    ]
+    results = []
+    for r in rows:
+        kode_provinsi = r.get("kode_provinsi")
+        kode_kota = r.get("kode_kota_kabupaten")
+        codes = [str(c) for c in (safe_json_load(r["kode_kecamatan"]) or [])]
+
+        provinsi_name = _get_provinsi_name(kode_provinsi)
+        kota_name = _get_kota_kabupaten_name(kode_kota)
+        kecamatan_names = _get_kecamatan_names(codes)
+
+        results.append({
+            "id": r["id"],
+            "nama_layer": r["nama_layer"],
+            "provinsi": {
+                "kode_provinsi": kode_provinsi,
+                "nama_provinsi": provinsi_name,
+            },
+            "kota_kabupaten": {
+                "kode_kota_kabupaten": kode_kota,
+                "nama_kota_kabupaten": kota_name,
+            },
+            "kecamatan": [
+                {
+                    "kode_kecamatan": c,
+                    "nama_kecamatan": kecamatan_names.get(c, c)
+                }
+                for c in codes
+            ],
+            "thresholds": safe_json_load(r["thresholds"]) if r.get("thresholds") else None,
+            "created_at": r["created_at"],
+        })
+
+    return results
+
 
 def get_analysis_result(analysis_id: int):
     with engine_dummy_bps.begin() as conn:
@@ -265,26 +357,93 @@ def get_analysis_result(analysis_id: int):
     if not r:
         return {"message": "Analysis result not found"}
 
-    # Extract kode_kecamatan from the result
-    codes = [str(c) for c in (safe_json_load(r["kode_kecamatan"]) or [])]
-    
-    # Fetch kecamatan features
-    code_to_feature = _fetch_kecamatan_features_by_codes(codes)
-    
-    # Build the response
+    # Parse kode
+    kode_provinsi = r.get("kode_provinsi")
+    kode_kota = r.get("kode_kota_kabupaten")
+    codes_kecamatan = [str(c) for c in (safe_json_load(r["kode_kecamatan"]) or [])]
+
+    # Ambil nama dari engine
+    provinsi_name = _get_provinsi_name(kode_provinsi)
+    kota_name = _get_kota_kabupaten_name(kode_kota)
+    kecamatan_names = _get_kecamatan_names(codes_kecamatan)
+
+    # Fetch geometries
+    code_to_feature = _fetch_kecamatan_features_by_codes(codes_kecamatan)
+
+    # Ambil semua kolom & parse JSON jika perlu
+    all_fields = {}
+    for key, value in r.items():
+        if key in ["kode_kecamatan", "lahan_kosong", "selected_facilites", "clip_geometries"]:
+            all_fields[key] = safe_json_load(value)
+        else:
+            all_fields[key] = value
+
+    # Build response utama (gabungkan all_fields + format tambahan)
     response = {
-        **{k: (safe_json_load(v) if isinstance(v, str) else v) for k, v in dict(r).items()},
-        "kecamatan_regions": _feature_collection([code_to_feature[c] for c in codes if c in code_to_feature])
+        **all_fields,  # semua field asli tabel
+        "provinsi": {
+            "kode_provinsi": kode_provinsi,
+            "nama_provinsi": provinsi_name,
+        },
+        "kota_kabupaten": {
+            "kode_kota_kabupaten": kode_kota,
+            "nama_kota_kabupaten": kota_name,
+        },
+        "kecamatan": [
+            {
+                "kode_kecamatan": c,
+                "nama_kecamatan": kecamatan_names.get(c, c)
+            }
+            for c in codes_kecamatan
+        ],
+        "kecamatan_regions": _feature_collection(
+            [code_to_feature[c] for c in codes_kecamatan if c in code_to_feature]
+        ),
     }
 
     return response
 
 
+
 def get_all_analysis_results():
     with engine_dummy_bps.begin() as conn:
         rows = conn.execute(text("""
-            SELECT id, nama_layer, created_at
+            SELECT id, nama_layer, grid_layer_name, kode_provinsi, kode_kota_kabupaten, kode_kecamatan, selected_fasilitas, created_at
             FROM analysis_results
             ORDER BY created_at DESC, id DESC
         """)).mappings().all()
-    return [dict(r) for r in rows]
+
+    results = []
+    for r in rows:
+        kode_provinsi = r.get("kode_provinsi")
+        kode_kota = r.get("kode_kota_kabupaten")
+        codes_kecamatan = [str(c) for c in (safe_json_load(r["kode_kecamatan"]) or [])]
+
+        provinsi_name = _get_provinsi_name(kode_provinsi)
+        kota_name = _get_kota_kabupaten_name(kode_kota)
+        kecamatan_names = _get_kecamatan_names(codes_kecamatan)
+
+        results.append({
+            "id": r["id"],
+            "nama_layer": r["nama_layer"],
+            "grid_layer_name": r["grid_layer_name"],
+            "provinsi": {
+                "kode_provinsi": kode_provinsi,
+                "nama_provinsi": provinsi_name,
+            },
+            "kota_kabupaten": {
+                "kode_kota_kabupaten": kode_kota,
+                "nama_kota_kabupaten": kota_name,
+            },
+            "kecamatan": [
+                {
+                    "kode_kecamatan": c,
+                    "nama_kecamatan": kecamatan_names.get(c, c)
+                }
+                for c in codes_kecamatan
+            ],
+            "selected_fasilitas": r["selected_fasilitas"],
+            "created_at": r["created_at"],
+        })
+
+    return results

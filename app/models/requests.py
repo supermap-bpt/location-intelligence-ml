@@ -40,7 +40,9 @@ class GridStoreRequest(BaseModel):
     grid_geometries: List[GridGeometry]
 
 class AnalysisResultRequest(BaseModel):
-    nama_layer: str        
+    nama_layer: str
+    kode_provinsi: str
+    kode_kota_kabupaten: str
     kode_kecamatan: List[str]
     lahan_kosong: List[Dict[str, Any]]
     selected_facilites: List[Dict[str, Any]]

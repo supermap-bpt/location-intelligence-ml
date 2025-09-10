@@ -60,21 +60,25 @@ def store_analysis_result(request: AnalysisResultRequest):
         query = text("""
             INSERT INTO analysis_results (
                 nama_layer,
+                grid_layer_name,
+                kode_provinsi,
+                kode_kota_kabupaten,
                 kode_kecamatan,
                 lahan_kosong,
                 selected_facilites,
                 clip_geometries,
-                grid_layer_name,
                 ukuran_buffer,
                 selected_fasilitas
             )
             VALUES (
                 :nama_layer,
+                :grid_layer_name,
+                :kode_provinsi,
+                :kode_kota_kabupaten,
                 CAST(:kode_kecamatan AS JSONB),
                 CAST(:lahan_kosong AS JSONB),
                 CAST(:selected_facilites AS JSONB),
                 CAST(:clip_geometries AS JSONB),
-                :grid_layer_name,
                 :ukuran_buffer,
                 :selected_fasilitas
             )
@@ -83,11 +87,13 @@ def store_analysis_result(request: AnalysisResultRequest):
 
         result = conn.execute(query, {
             "nama_layer": request.nama_layer,
+            "grid_layer_name": request.grid_layer_name,
+            "kode_provinsi": request.kode_provinsi,
+            "kode_kota_kabupaten": request.kode_kota_kabupaten,
             "kode_kecamatan": json.dumps(request.kode_kecamatan),
             "lahan_kosong": json.dumps(request.lahan_kosong),
             "selected_facilites": json.dumps(request.selected_facilites),
             "clip_geometries": json.dumps(request.grid_geometries),
-            "grid_layer_name": request.grid_layer_name,
             "ukuran_buffer": request.ukuran_buffer,
             "selected_fasilitas": request.selected_fasilitas
         })
