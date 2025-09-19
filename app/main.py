@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import health, store, suitability, facilities, regions, buffer, fetch, delete
+from app.routers import auth, health, store, suitability, facilities, regions, buffer, fetch, delete
 
 app = FastAPI(title="Suitability API", version="1.0.0")
 
@@ -16,6 +16,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(health.router, prefix="/health", tags=["Health"])
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(suitability.router, prefix="/suitability", tags=["Suitability"])
 app.include_router(facilities.router, prefix="/facilities", tags=["Facilities"])
 app.include_router(regions.router, prefix="/regions", tags=["Regions"])
