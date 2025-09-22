@@ -8,7 +8,5 @@ pandas
 numpy
 uvicorn
 sqlalchemy
-scikit-learn
 psycopg2
 python-dotenv
-scikit-learn
