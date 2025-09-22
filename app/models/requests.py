@@ -22,12 +22,15 @@ class Facility(BaseModel):
     geometry: Dict[str, Any]
 
 class GridGeometry(BaseModel):
-    id: int
+    id: str
     predicted_class: Optional[str]
     grid_value: float
     geometry: Dict[str, Any]
     feature_scores: Dict[str, float]
     weights_applied: Dict[str, float]
+    provinsi: Optional[str] = None
+    kabupaten: Optional[str] = None
+    kecamatan: List[str] = []
 
 class GridStoreRequest(BaseModel):
     nama_layer: str
