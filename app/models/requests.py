@@ -10,11 +10,15 @@ class BatchRequest(BaseModel):
     low_range: float
     high_range: float
 
+class BufferGrid(BaseModel):
+    geometry: Dict[str, Any]
+    properties: Dict[str, Any]
+
 class BufferRequest(BaseModel):
     buffer_polygons: List[Any]
-    recommended_area: List[Any]
+    recommended_area: List[BufferGrid]
     luas_area: Optional[float] = 0
-
+    
 class Facility(BaseModel):
     id: int
     type: str
