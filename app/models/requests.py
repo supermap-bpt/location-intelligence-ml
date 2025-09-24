@@ -38,6 +38,7 @@ class GridGeometry(BaseModel):
 
 class GridStoreRequest(BaseModel):
     nama_layer: str
+    deskripsi_layer: Optional[str] = None
     kode_provinsi: str             
     kode_kota_kabupaten: str          
     kode_kecamatan: List[str]
@@ -48,6 +49,7 @@ class GridStoreRequest(BaseModel):
 
 class AnalysisResultRequest(BaseModel):
     nama_layer: str
+    deskripsi_layer: Optional[str] = None
     kode_provinsi: str
     kode_kota_kabupaten: str
     kode_kecamatan: List[str]

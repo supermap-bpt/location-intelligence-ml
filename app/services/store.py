@@ -10,6 +10,7 @@ def store_grid_score(request: GridStoreRequest):
             query = text("""
                 INSERT INTO grid_scores (
                     nama_layer,
+                    deskripsi_layer,
                     kode_provinsi,
                     kode_kota_kabupaten,
                     kode_kecamatan,
@@ -22,6 +23,7 @@ def store_grid_score(request: GridStoreRequest):
                 )
                 VALUES (
                     :nama_layer,
+                    :deskripsi_layer,
                     :kode_provinsi,
                     :kode_kota_kabupaten,
                     CAST(:kode_kecamatan AS JSONB),
@@ -37,6 +39,7 @@ def store_grid_score(request: GridStoreRequest):
 
             result = conn.execute(query, {
                 "nama_layer": request.nama_layer,
+                "deskripsi_layer": request.deskripsi_layer,
                 "kode_provinsi": request.kode_provinsi,
                 "kode_kota_kabupaten": request.kode_kota_kabupaten,
                 "kode_kecamatan": json.dumps(request.kode_kecamatan),
@@ -60,6 +63,7 @@ def store_analysis_result(request: AnalysisResultRequest):
         query = text("""
             INSERT INTO analysis_results (
                 nama_layer,
+                deskripsi_layer,
                 grid_layer_name,
                 kode_provinsi,
                 kode_kota_kabupaten,
@@ -72,6 +76,7 @@ def store_analysis_result(request: AnalysisResultRequest):
             )
             VALUES (
                 :nama_layer,
+                :deskripsi_layer,
                 :grid_layer_name,
                 :kode_provinsi,
                 :kode_kota_kabupaten,
@@ -87,6 +92,7 @@ def store_analysis_result(request: AnalysisResultRequest):
 
         result = conn.execute(query, {
             "nama_layer": request.nama_layer,
+            "deskripsi_layer": request.deskripsi_layer,
             "grid_layer_name": request.grid_layer_name,
             "kode_provinsi": request.kode_provinsi,
             "kode_kota_kabupaten": request.kode_kota_kabupaten,
