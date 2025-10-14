@@ -4,120 +4,130 @@ from shapely.geometry import shape
 from app.models.responses import SuitabilityCategory
 from app.models.requests import BatchRequest
 from app.services.suitability.intersect import get_intersect_value
-from app.services.suitability import loaders
+from app.services.suitability.loaders import load_layer, all_layer_specs
+
+LEGACY_ALIASES = {
+    "jumlahsiswaputussekolah": "siswa_putus_sekolah",
+    "peopleden":               "kepadatan_penduduk",
+    "poiarea":                 "poi",
+    "nearestfaskes":           "kedekatan_faskes",
+    "nearest_sungai":          "kedekatan_sungai",
+    "road":                    "jalan",
+    # add more if you had other legacy names
+}
+
+def _normalize_weights(weights: dict, specs: dict) -> dict:
+    norm = {}
+    for k, v in (weights or {}).items():
+        key = LEGACY_ALIASES.get(k, k)
+        if key not in specs:
+            raise HTTPException(status_code=400, detail=f"Unknown feature code in weights: '{k}'")
+        norm[key] = v
+    return norm
+
+def _pick_gate_code(specs: dict) -> str:
+    """
+    Prefer an explicit flag (is_required=True) for the gate (e.g., pendapatan_per_kapita_R).
+    If multiple are marked required, pick the first numeric one.
+    Fallback: name heuristic for 'pendapatan_per_kapita'.
+    """
+    required_numeric = [c for c, s in specs.items() if s["is_required"] and s["data_type"] in {"numeric", "double precision", "real", "integer", "bigint", "smallint"}]
+    if required_numeric:
+        return required_numeric[0]
+    for code in specs.keys():
+        if "pendapatan_per_kapita" in code.lower():
+            return code
+    raise HTTPException(status_code=500, detail="Cannot locate GDP gate parameter (mark it is_required=true or name it pendapatan_per_kapita*).")
 
 async def batch_predict_service(request: BatchRequest):
     try:
-        # figure out which layers we actually need
-        all_weights = {k for grid in request.data for k, w in grid.weights.items() if w > 0}
+        specs = all_layer_specs()   # { code: {table, value_col, data_type, unit, is_required, min_value, max_value}, ... }
+        gate_code = _pick_gate_code(specs)
 
-        gdfs = {
-            "siswa": loaders.get_siswa_putus_sekolah_geodataframe() if "jumlahsiswaputussekolah" in all_weights else None,
-            "kemiskinan": loaders.get_kemiskinan_geodataframe() if "kemiskinan" in all_weights else None,
-            "penduduk": loaders.get_kepadatan_penduduk_geodataframe() if "peopleden" in all_weights else None,
-            "poi": loaders.get_poi_geodataframe() if "poiarea" in all_weights else None,
-            "sungai": loaders.get_kedekatan_sungai_geodataframe() if "nearest_sungai" in all_weights else None,
-            "faskes": loaders.get_kedekatan_faskes_geodataframe() if "nearestfaskes" in all_weights else None,
-            "road": loaders.get_kedekatan_jalan_geodataframe() if "road" in all_weights else None,
-            "slope": loaders.get_slope_geodataframe() if "slope" in all_weights else None,
-            "gdp": loaders.get_gdp_geodataframe(),  # global
-        }
+        # Validate that all weighted features exist & are numeric
+        weights = _normalize_weights(request.weights, specs)
+        for code in weights.keys():
+            if code not in specs:
+                raise HTTPException(status_code=400, detail=f"Unknown feature code in weights: '{code}'")
+            if specs[code]["data_type"] not in {"numeric", "double precision", "real", "integer", "bigint", "smallint"}:
+                raise HTTPException(status_code=400, detail=f"Feature '{code}' is not numeric (data_type={specs[code]['data_type']}).")
+
+        # Load needed layers once (features with nonzero weights + gate)
+        needed = {c for c, w in weights.items() if w > 0}
+        needed.add(gate_code)
+        gdfs = {code: (load_layer(code) if code in needed else None) for code in specs.keys()}
+
+        # Gate range: prefer request.mandatory_parameters, else parameter.min_value/max_value
+        mandatory = request.mandatory_parameters.get("pendapatan_per_kapita", {}) or {}
+        low_range = mandatory.get("min_value", specs[gate_code]["min_value"] or 0)
+        high_range = mandatory.get("max_value", specs[gate_code]["max_value"] or 0)
+
+        # Feature codes exclude the gate
+        feature_codes = [c for c in specs.keys() if c != gate_code]
+
+        total_weight = sum(weights.values())
+        if not np.isclose(total_weight, 100.0, atol=1e-6):
+            raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
 
         grid_scores = []
-
         for grid_item in request.data:
             polygon = shape(grid_item.geometry_grid)
 
-            # --- Per-polygon feature scoring (ALWAYS) ---
-            weights = dict(grid_item.weights or {})
-            total_weight = sum(weights.values())
-            if not np.isclose(total_weight, 100.0, atol=1e-6):
-                raise HTTPException(status_code=400, detail=f"Weights must sum to 100. Got {total_weight}.")
+            # compute per-feature dynamically
+            feature_scores = {}
+            for code in feature_codes:
+                if code not in needed:
+                    # not weighted → just report 0 (or skip; keeping 0 is clearer)
+                    feature_scores[code] = 0.0
+                    continue
+                gdf = gdfs.get(code)
+                val_col = specs[code]["value_col"]
+                feature_scores[code] = get_intersect_value(gdf, polygon, val_col) if gdf is not None else 0.0
 
-            feature_scores = {
-                "jumlahsiswaputussekolah": get_intersect_value(gdfs["siswa"], polygon, 's_siswaputussekolah') if gdfs["siswa"] is not None else 0.0,
-                "kemiskinan":              get_intersect_value(gdfs["kemiskinan"], polygon, 's_kemiskinan')     if gdfs["kemiskinan"] is not None else 0.0,
-                "peopleden":               get_intersect_value(gdfs["penduduk"], polygon, 's_pddk')             if gdfs["penduduk"] is not None else 0.0,
-                "poiarea":                 get_intersect_value(gdfs["poi"], polygon, 's_poi')                   if gdfs["poi"] is not None else 0.0,
-                "nearest_sungai":          get_intersect_value(gdfs["sungai"], polygon, 's_sungai')             if gdfs["sungai"] is not None else 0.0,
-                "nearestfaskes":           get_intersect_value(gdfs["faskes"], polygon, 's_faskes')             if gdfs["faskes"] is not None else 0.0,
-                "road":                    get_intersect_value(gdfs["road"], polygon, 's_road')                 if gdfs["road"] is not None else 0.0,
-                "slope":                   get_intersect_value(gdfs["slope"], polygon, 's_slope')               if gdfs["slope"] is not None else 0.0,
-            }
+            grid_value_raw = sum(feature_scores.get(k, 0.0) * (weights.get(k, 0.0) / 100.0) for k in feature_scores)
 
-            grid_value_raw = sum(feature_scores.get(k, 0.0) * (weights.get(k, 0.0) / 100.0) for k in weights)
+            # GDP gate
+            gdp_val = get_intersect_value(gdfs[gate_code], polygon, specs[gate_code]["value_col"]) if gdfs[gate_code] is not None else None
+            gdp_ok = (gdp_val is not None) and (low_range <= gdp_val <= high_range)
 
-            # --- Global GDP gate ---
-            gdp_value = get_intersect_value(gdfs["gdp"], polygon, 'pendapatan') if gdfs["gdp"] is not None else None
-            gdp_in_range = (gdp_value is not None) and (request.low_range <= gdp_value <= request.high_range)
+            grid_scores.append({
+                "geometry": grid_item.geometry_grid,
+                "grid_value": grid_value_raw if gdp_ok else 0.0,
+                "grid_value_raw": grid_value_raw,
+                "feature_scores": feature_scores,
+                "weights_applied": weights,
+                "gdp": gdp_val,
+                "predicted_class": None if gdp_ok else "low",
+                "forced_by_gdp": not gdp_ok,
+            })
 
-            if not gdp_in_range:
-                grid_scores.append({
-                    "geometry": grid_item.geometry_grid,
-                    "grid_value": 0.0,
-                    "grid_value_raw": grid_value_raw,
-                    "feature_scores": feature_scores,
-                    "weights_applied": weights,
-                    "gdp": gdp_value,
-                    "predicted_class": "low",
-                    "forced_by_gdp": True
-                })
-            else:
-                grid_scores.append({
-                    "geometry": grid_item.geometry_grid,
-                    "grid_value": grid_value_raw,
-                    "grid_value_raw": grid_value_raw,
-                    "feature_scores": feature_scores,
-                    "weights_applied": weights,
-                    "gdp": gdp_value,
-                    "predicted_class": None,
-                    "forced_by_gdp": False
-                })
-
-        # --- Thresholds: fair thirds with rounding and +0.01 gap ---
-        valid_values = [gs["grid_value"] for gs in grid_scores if not gs["forced_by_gdp"]]
-
-        if len(valid_values) >= 1:
-            vmin = float(min(valid_values))
-            vmax = float(max(valid_values))
+        # thresholds (same logic as before)
+        valid = [gs["grid_value"] for gs in grid_scores if not gs["forced_by_gdp"]]
+        if valid:
+            vmin, vmax = float(min(valid)), float(max(valid))
             spread = vmax - vmin
-
             if spread <= 1e-12:
                 thresholds = {"high": [round(vmin, 2), round(vmax, 2)]}
             else:
-                c1 = vmin + spread / 3.0
-                c2 = vmin + 2.0 * spread / 3.0
-
-                # Round values
-                vmin = round(vmin, 2)
-                c1   = round(c1, 2)
-                c2   = round(c2, 2)
-                vmax = round(vmax, 2)
-
-                # Apply +0.01 step between categories
-                thresholds = {
-                    "low":    [vmin, c1],
-                    "medium": [c1 + 0.01, c2],
-                    "high":   [c2 + 0.01, vmax],
-                }
+                c1 = round(vmin + spread/3, 2)
+                c2 = round(vmin + 2*spread/3, 2)
+                thresholds = {"low": [round(vmin, 2), c1], "medium": [c1 + 0.01, c2], "high": [c2 + 0.01, round(vmax, 2)]}
         else:
             thresholds = {"low": [0.0, 0.0]}
 
-        # --- Assign categories (keep GDP-forced low as low) ---
+        # categorize
         results = []
         for gs in grid_scores:
-            if gs["predicted_class"] == "low" and gs["forced_by_gdp"]:
+            if gs["forced_by_gdp"]:
                 category = SuitabilityCategory.NOT_RECOMMENDED
             else:
                 val = gs["grid_value"]
-                if "low" in thresholds and thresholds["low"][0] <= val <= thresholds["low"][1]:
+                if thresholds["low"][0] <= val <= thresholds["low"][1]:
                     category = SuitabilityCategory.NOT_RECOMMENDED
                 elif "medium" in thresholds and thresholds["medium"][0] <= val <= thresholds["medium"][1]:
                     category = SuitabilityCategory.NEUTRAL
-                elif "high" in thresholds and val >= thresholds["high"][0]:
-                    category = SuitabilityCategory.RECOMMENDED
                 else:
-                    category = SuitabilityCategory.NEUTRAL
+                    category = SuitabilityCategory.RECOMMENDED
 
             results.append({
                 "predicted_class": category,
@@ -125,15 +135,10 @@ async def batch_predict_service(request: BatchRequest):
                 "grid_value": gs["grid_value"],
                 "feature_scores": gs["feature_scores"],
                 "weights_applied": gs["weights_applied"],
-                "gdp": gs["gdp"]
+                "gdp": gs["gdp"],
             })
 
-        return {
-            "data": results,
-            "thresholds": thresholds,
-            "low_range_gdp": request.low_range,
-            "high_range_gdp": request.high_range
-        }
+        return {"data": results, "thresholds": thresholds, "low_range_gdp": low_range, "high_range_gdp": high_range}
 
     except HTTPException:
         raise

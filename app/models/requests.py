@@ -1,9 +1,12 @@
 from pydantic import BaseModel
 from typing import Dict, List, Any, Optional
 
+class FeatureScores(BaseModel):
+    gdp: float
+
 class GridData(BaseModel):
     geometry_grid: Dict[str, Any]
-    weights: Dict[str, float]
+    feature_scores: Dict[str, float]
 
 class BatchRequest(BaseModel):
     data: List[GridData]
@@ -59,3 +62,8 @@ class AnalysisResultRequest(BaseModel):
     grid_layer_name: Optional[str] = None
     ukuran_buffer: Optional[float] = None
     selected_fasilitas: Optional[str] = None
+
+class SuitabilityRequest(BaseModel):
+    data: List[GridData]
+    weights: Dict[str, float]
+    mandatory_parameters: Dict[str, Dict[str, float]]
