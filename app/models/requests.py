@@ -6,7 +6,14 @@ class FeatureScores(BaseModel):
 
 class GridData(BaseModel):
     geometry_grid: Dict[str, Any]
-    feature_scores: Dict[str, float]
+
+class RangeSpec(BaseModel):
+    min_value: float
+    max_value: float
+    
+class ConsideredParamSpec(BaseModel):
+    invert: bool = False
+    weight: float
 
 class BatchRequest(BaseModel):
     data: List[GridData]
@@ -34,21 +41,24 @@ class GridGeometry(BaseModel):
     grid_value: float
     geometry: Dict[str, Any]
     feature_scores: Dict[str, float]
-    weights_applied: Dict[str, float]
     provinsi: Optional[str] = None
     kabupaten: Optional[str] = None
     kecamatan: List[str] = []
 
+class Thresholds(BaseModel):
+    composite: List[float]
+    explanation: str
+
 class GridStoreRequest(BaseModel):
     nama_layer: str
     deskripsi_layer: Optional[str] = None
-    kode_provinsi: str             
-    kode_kota_kabupaten: str          
+    kode_provinsi: str
+    kode_kota_kabupaten: str
     kode_kecamatan: List[str]
-    low_range_gdp: float
-    high_range_gdp: float
-    thresholds: Dict[str, List[float]]
+    thresholds: Thresholds
     grid_geometries: List[GridGeometry]
+    mandatory_parameters: Dict[str, RangeSpec]
+    optional_parameters: Optional[Dict[str, ConsideredParamSpec]] = None
 
 class AnalysisResultRequest(BaseModel):
     nama_layer: str
@@ -65,5 +75,5 @@ class AnalysisResultRequest(BaseModel):
 
 class SuitabilityRequest(BaseModel):
     data: List[GridData]
-    weights: Dict[str, float]
-    mandatory_parameters: Dict[str, Dict[str, float]]
+    mandatory_parameters: Dict[str, RangeSpec]
+    optional_parameters: Dict[str, ConsideredParamSpec]

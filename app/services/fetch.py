@@ -3,7 +3,7 @@ from typing import Dict, List, Any, Optional
 
 from sqlalchemy import text
 
-from app.database import engine_dummy_bps, engine
+from app.database import engine
 
 
 # =========================
@@ -52,7 +52,7 @@ def _qident(schema: str, table: str) -> str:
 
 # ---- Admin (kecamatan) lives on `engine`
 _ADMIN_BOUNDS = ("public", "kecamatan")     # change schema/table if needed
-_ADMIN_CODE_COL = "kode_kecamatan"
+_ADMIN_CODE_COL = "kdkec"
 _ADMIN_GEOM_COL = "geom"                    # change if your geom column differs
 
 
@@ -77,7 +77,7 @@ def _fetch_kecamatan_features_by_codes(codes: List[str]) -> Dict[str, Dict]:
         rows = conn.execute(text(f"""
             SELECT
                 k.{_ADMIN_CODE_COL} AS kode_kecamatan,
-                k.nama_kecamatan,
+                k.nmkec as nama_kecamatan,
                 ST_AsGeoJSON(k.{_ADMIN_GEOM_COL}) AS geom
             FROM {adm_fqtn} k
             WHERE k.{_ADMIN_CODE_COL} = ANY(:codes)
@@ -103,9 +103,9 @@ def _get_provinsi_name(kode_provinsi: str) -> Optional[str]:
         return None
     with engine.begin() as conn:
         row = conn.execute(text("""
-            SELECT nama_provinsi
+            SELECT nmprov as nama_provinsi
             FROM public.provinsi
-            WHERE kode_provinsi = :kode
+            WHERE kdprov = :kode
         """), {"kode": kode_provinsi}).mappings().first()
     return row["nama_provinsi"] if row else None
 
@@ -115,9 +115,9 @@ def _get_kota_kabupaten_name(kode_kota_kabupaten: str) -> Optional[str]:
         return None
     with engine.begin() as conn:
         row = conn.execute(text("""
-            SELECT nama_kota_kabupaten
+            SELECT nmkab as nama_kota_kabupaten
             FROM public.kota_kabupaten
-            WHERE kode_kota_kabupaten = :kode
+            WHERE kdkab = :kode
         """), {"kode": kode_kota_kabupaten}).mappings().first()
     return row["nama_kota_kabupaten"] if row else None
 
@@ -128,9 +128,9 @@ def _get_kecamatan_names(codes: List[str]) -> Dict[str, str]:
         return {}
     with engine.begin() as conn:
         rows = conn.execute(text("""
-            SELECT kode_kecamatan, nama_kecamatan
+            SELECT kdkec as kode_kecamatan, nmkec as nama_kecamatan
             FROM public.kecamatan
-            WHERE kode_kecamatan = ANY(:codes)
+            WHERE kdkec = ANY(:codes)
         """), {"codes": codes}).mappings().all()
     return {r["kode_kecamatan"]: r["nama_kecamatan"] for r in rows}
 
@@ -179,7 +179,7 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
         name_rows = conn.execute(text(f"""
             SELECT
                 { _ADMIN_CODE_COL } AS kode_kecamatan,
-                nama_kecamatan
+                nmkec as nama_kecamatan
             FROM {adm_fqtn}
             WHERE { _ADMIN_CODE_COL } = ANY(:codes)
         """), {"codes": unique_codes}).mappings().all()
@@ -209,7 +209,7 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
         WHERE UPPER(f.{poi_kec_name_col}) = ANY(:nmkec_names)
     """
 
-    with engine_dummy_bps.begin() as conn:
+    with engine.begin() as conn:
         rows = conn.execute(
             text(sql),
             {"nmkec_names": nmkec_names},
@@ -225,18 +225,72 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
 
     return features
 
+
+def _fetch_poi_by_categories(codes: List[str], categories: Optional[List[str]]) -> Optional[List[Dict]]:
+    """
+    Fetch POI from public.poi table filtered by:
+      - kdkec IN (codes)
+      - kategori IN (categories)
+
+    Returns a list of GeoJSON Feature dicts (NOT a FeatureCollection).
+    """
+    if not categories or not codes:
+        return None
+
+    unique_codes = sorted({c for c in codes if c})
+    unique_categories = sorted({cat.strip().upper() for cat in categories if cat.strip()})
+
+    if not unique_codes or not unique_categories:
+        return None
+
+    sql = text("""
+        SELECT
+            smid AS id,
+            COALESCE(nama, '') AS nama,
+            kategori AS category,
+            kdkec AS kode_kecamatan,
+            ST_AsGeoJSON(ST_Transform(smgeometry, 4326)) AS geom_json
+        FROM public.poi
+        WHERE kdkec = ANY(:codes)
+          AND UPPER(kategori) = ANY(:categories)
+        ORDER BY smid
+        LIMIT 1000
+    """)
+
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {
+            "codes": unique_codes,
+            "categories": unique_categories
+        }).mappings().all()
+
+    features: List[Dict[str, Any]] = []
+    for r in rows:
+        gj = r.get("geom_json")
+        if not gj:
+            continue
+        props = {
+            "id": r["id"],
+            "nama": r["nama"],
+            "category": r["category"],
+            "kode_kecamatan": r["kode_kecamatan"]
+        }
+        features.append(_feature(gj, props))
+
+    return features
+
 # =========================
 # Public API functions
 # =========================
 
-def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
+def get_grid_score(grid_id: int, facility_key: Optional[str] = None, categories: Optional[List[str]] = None):
     """
     Fetch a single grid score record (from engine_dummy_bps) and enrich response with:
       - provinsi, kota/kabupaten, kecamatan (kode + nama)
       - kecamatan polygon FeatureCollection (from engine)
       - optional facilities list (array of GeoJSON Features) filtered by kdkec (from engine_dummy_bps)
+      - optional POI/categories list (array of GeoJSON Features) filtered by kdkec and kategori
     """
-    with engine_dummy_bps.begin() as conn:
+    with engine.begin() as conn:
         r = conn.execute(text("""
             SELECT *
             FROM grid_scores
@@ -262,7 +316,7 @@ def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
     response: Dict[str, Any] = {
         "id": r["id"],
         "nama_layer": r["nama_layer"],
-        "deskripsi_layer": r.get("deskripsi_layer"), 
+        "deskripsi_layer": r.get("deskripsi_layer"),
         "provinsi": {
             "kode_provinsi": kode_provinsi,
             "nama_provinsi": provinsi_name,
@@ -279,11 +333,10 @@ def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
             for c in codes
         ],
         "thresholds": safe_json_load(r["thresholds"]),
-        "low_range_gdp": r["low_range_gdp"],
-        "high_range_gdp": r["high_range_gdp"],
+        "mandatory_parameters": safe_json_load(r.get("mandatory_parameters")),
+        "optional_parameters": safe_json_load(r.get("optional_parameters")),
+        "weights_applied": safe_json_load(r.get("weights_applied")),
         "grid_geometries": safe_json_load(r["grid_geometries"]),
-        "feature_scores": safe_json_load(r["feature_scores"]),
-        "weights_applied": safe_json_load(r["weights_applied"]),
         "kecamatan_regions": _feature_collection(
             [code_to_feature[c] for c in codes if c in code_to_feature]
         ),
@@ -295,10 +348,16 @@ def get_grid_score(grid_id: int, facility_key: Optional[str] = None):
         response["facility_requested"] = facility_key
         response["facilities"] = facilities_list
 
+    # Fetch POI by categories if provided
+    poi_list = _fetch_poi_by_categories(codes, categories)
+    if poi_list is not None:
+        response["categories_requested"] = categories
+        response["poi"] = poi_list
+
     return response
 
 def get_all_grid_scores():
-    with engine_dummy_bps.begin() as conn:
+    with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT
                 id,
@@ -350,7 +409,7 @@ def get_all_grid_scores():
 
 
 def get_analysis_result(analysis_id: int) -> Dict[str, Any]:
-    with engine_dummy_bps.begin() as conn:
+    with engine.begin() as conn:
         r = conn.execute(text("""
             SELECT *
             FROM analysis_results
@@ -408,7 +467,7 @@ def get_analysis_result(analysis_id: int) -> Dict[str, Any]:
     return response
 
 def get_all_analysis_results():
-    with engine_dummy_bps.begin() as conn:
+    with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT id, nama_layer, deskripsi_layer, grid_layer_name, kode_provinsi, kode_kota_kabupaten, kode_kecamatan, selected_fasilitas, created_at
             FROM analysis_results

@@ -37,20 +37,6 @@ venv\Scripts\activate       # On Windows
 pip install -r requirements.txt
 ```
 ---
-## Directory Structure
-```
-project/
-│
-├── model/
-│   ├── random_forest_model.pkl
-│
-├── .gitignore
-├── app.py
-├── LICENSE
-├── README.md
-└── requirements.txt
-```
----
 ## 🚦 Running the API Server
 ```
 uvicorn app.main:app --reload

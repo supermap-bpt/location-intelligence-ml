@@ -8,6 +8,7 @@ class SuitabilityCategory(str, Enum):
     RECOMMENDED = "high"
 
 class SuitabilityResponse(BaseModel):
+    """Legacy response model - deprecated"""
     predicted_class: str
     grid_value: float
     feature_scores: Dict[str, float]
@@ -15,6 +16,39 @@ class SuitabilityResponse(BaseModel):
     input_polygon: List[List[Tuple[float, float]]]
     timestamp: str
     grid_id: Optional[str] = None
+
+class GridGeometryResponse(BaseModel):
+    """Response model for individual grid geometry in suitability analysis"""
+    id: str
+    predicted_class: str
+    grid_value: float
+    geometry: Dict[str, Any]
+    feature_scores: Dict[str, float]
+    provinsi: Optional[str] = None
+    kabupaten: Optional[str] = None
+    kecamatan: List[str] = Field(default_factory=list)
+
+class ThresholdsResponse(BaseModel):
+    """Thresholds for suitability classification"""
+    composite: List[float]
+    explanation: str
+
+class MandatoryParameterResponse(BaseModel):
+    """Response model for mandatory parameter"""
+    min_value: float
+    max_value: float
+
+class OptionalParameterResponse(BaseModel):
+    """Response model for optional parameter"""
+    weight: float
+    invert: bool
+
+class SuitabilityAnalysisResponse(BaseModel):
+    """Complete response model for suitability analysis"""
+    thresholds: ThresholdsResponse
+    grid_geometries: List[GridGeometryResponse]
+    mandatory_parameters: Dict[str, MandatoryParameterResponse]
+    optional_parameters: Dict[str, OptionalParameterResponse]
 
 class HealthCheckResponse(BaseModel):
     status: str

@@ -1,19 +1,22 @@
 from fastapi import APIRouter, HTTPException
-from app.models.requests import BatchRequest, SuitabilityRequest
-from app.services.suitability.suitability import batch_predict_service
+from app.models.requests import SuitabilityRequest
+from app.models.responses import SuitabilityAnalysisResponse
+from app.services.suitability.suitability import _run_suitability
 
 router = APIRouter()
 
-@router.post("/batch-predict")
-async def batch_predict(request: BatchRequest):
-    try:
-        return await batch_predict_service(request)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.post("/recommendations", response_model=SuitabilityAnalysisResponse)
+async def calculate_suitability(request: SuitabilityRequest) -> SuitabilityAnalysisResponse:
+    """
+    Calculate suitability analysis for provided grid geometries based on mandatory and optional parameters.
 
-@router.post("/recommendations")
-async def calculate_suitability(request: SuitabilityRequest):
+    Returns a comprehensive analysis including:
+    - Suitability classification for each grid
+    - Feature scores and composite values
+    - Administrative boundaries (province, district, subdistrict)
+    - Classification thresholds
+    """
     try:
-        return await batch_predict_service(request)
+        return await _run_suitability(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

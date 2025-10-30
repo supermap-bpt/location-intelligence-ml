@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from app.services.fetch import (
     get_grid_score,
     get_analysis_result,
@@ -25,9 +25,23 @@ async def fetch_grid_score(
         description="Optional facility layer to fetch within the selected kecamatan. "
                     "One of: sekolah, hotel, pusatperbelanjaan, rumahsakit."
     ),
+    categories: Optional[str] = Query(
+        default=None,
+        description="Optional comma-separated POI categories to fetch within the selected kecamatan. "
+                    "Example: GEREJA,MASJID,PURA"
+    ),
 ):
     try:
-        result = get_grid_score(grid_id, facility.value if facility else None)
+        # Parse categories if provided
+        category_list: Optional[List[str]] = None
+        if categories:
+            category_list = [c.strip() for c in categories.split(",") if c.strip()]
+
+        result = get_grid_score(
+            grid_id,
+            facility.value if facility else None,
+            category_list
+        )
         if "message" in result and result["message"] == "Grid score not found":
             raise HTTPException(status_code=404, detail=result["message"])
         return result

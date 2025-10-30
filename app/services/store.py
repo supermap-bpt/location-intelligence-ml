@@ -1,12 +1,20 @@
 import json
 from sqlalchemy import text
-from app.database import engine_dummy_bps
+from app.database import engine
 from app.models.requests import AnalysisResultRequest, GridStoreRequest
 
 
 def store_grid_score(request: GridStoreRequest):
     try:
-        with engine_dummy_bps.begin() as conn:
+        with engine.begin() as conn:
+            # Extract weights_applied from optional_parameters as a convenience
+            weights_applied = None
+            if request.optional_parameters:
+                weights_applied = {
+                    param_name: param_spec.weight
+                    for param_name, param_spec in request.optional_parameters.items()
+                }
+
             query = text("""
                 INSERT INTO grid_scores (
                     nama_layer,
@@ -15,11 +23,10 @@ def store_grid_score(request: GridStoreRequest):
                     kode_kota_kabupaten,
                     kode_kecamatan,
                     thresholds,
-                    low_range_gdp,
-                    high_range_gdp,
-                    grid_geometries,
-                    feature_scores,
-                    weights_applied
+                    mandatory_parameters,
+                    optional_parameters,
+                    weights_applied,
+                    grid_geometries
                 )
                 VALUES (
                     :nama_layer,
@@ -28,11 +35,10 @@ def store_grid_score(request: GridStoreRequest):
                     :kode_kota_kabupaten,
                     CAST(:kode_kecamatan AS JSONB),
                     CAST(:thresholds AS JSONB),
-                    :low_range_gdp,
-                    :high_range_gdp,
-                    CAST(:grid_geometries AS JSONB),
-                    CAST(:feature_scores AS JSONB),
-                    CAST(:weights_applied AS JSONB)
+                    CAST(:mandatory_parameters AS JSONB),
+                    CAST(:optional_parameters AS JSONB),
+                    CAST(:weights_applied AS JSONB),
+                    CAST(:grid_geometries AS JSONB)
                 )
                 RETURNING id
             """)
@@ -43,12 +49,11 @@ def store_grid_score(request: GridStoreRequest):
                 "kode_provinsi": request.kode_provinsi,
                 "kode_kota_kabupaten": request.kode_kota_kabupaten,
                 "kode_kecamatan": json.dumps(request.kode_kecamatan),
-                "thresholds": json.dumps(request.thresholds),
-                "low_range_gdp": request.low_range_gdp,
-                "high_range_gdp": request.high_range_gdp,
-                "grid_geometries": json.dumps([g.dict() for g in request.grid_geometries]),
-                "feature_scores": json.dumps([g.feature_scores for g in request.grid_geometries]),
-                "weights_applied": json.dumps([g.weights_applied for g in request.grid_geometries]),
+                "thresholds": json.dumps(request.thresholds.model_dump()),
+                "mandatory_parameters": json.dumps({k: v.model_dump() for k, v in request.mandatory_parameters.items()}),
+                "optional_parameters": json.dumps({k: v.model_dump() for k, v in request.optional_parameters.items()}) if request.optional_parameters else None,
+                "weights_applied": json.dumps(weights_applied) if weights_applied else None,
+                "grid_geometries": json.dumps([g.model_dump() for g in request.grid_geometries]),
             })
             inserted_id = result.scalar_one()
             return {"message": "Grid score stored successfully", "id": inserted_id}
@@ -59,7 +64,7 @@ def store_grid_score(request: GridStoreRequest):
         raise
 
 def store_analysis_result(request: AnalysisResultRequest):
-    with engine_dummy_bps.begin() as conn:
+    with engine.begin() as conn:
         query = text("""
             INSERT INTO analysis_results (
                 nama_layer,

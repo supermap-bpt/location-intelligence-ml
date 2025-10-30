@@ -1,33 +1,48 @@
-from fastapi import APIRouter, Query, HTTPException
-from typing import List
-from app.models.facilities import HotelItem, PendidikanItem, PusatPerbelanjaanItem, RumahSakitItem
-from app.services.geodata import (
-    get_facilities_service, 
-    get_hotels_service, 
-    get_pendidikan_service, 
-    get_pusatperbelanjaan_service, 
-    get_rumahsakit_service
+# app/routes/facilities.py
+from fastapi import APIRouter, Query
+from typing import Optional, List
+from app.services.facilities.facility_services import (
+    list_facility_categories_service,
+    get_facilities_by_categories_service,
 )
 
 router = APIRouter()
 
-@router.get("", summary="Get facilities by type")
-def get_facilities(types: str = Query(..., description="Comma-separated facility types (e.g. hotel,sekolah)")):
-    return get_facilities_service(types)
 
-# Ubah parameter menjadi List[str] untuk multiple values
-@router.get("/hotel", response_model=list[HotelItem])
-def get_hotel(nmkec: List[str] = Query(..., description="List of kecamatan names")):
-    return get_hotels_service(nmkec)
+@router.get("/categories", summary="List facility categories")
+def list_facility_categories():
+    """
+    Returns distinct categories and row counts from public.poi
+    """
+    return list_facility_categories_service()
 
-@router.get("/pendidikan", response_model=list[PendidikanItem])
-def get_pendidikan(nmkec: List[str] = Query(..., description="List of kecamatan names")):
-    return get_pendidikan_service(nmkec)
 
-@router.get("/pusatperbelanjaan", response_model=list[PusatPerbelanjaanItem])
-def get_pusatperbelanjaan(nmkec: List[str] = Query(..., description="List of kecamatan names")):
-    return get_pusatperbelanjaan_service(nmkec)
+@router.get("/by-categories", summary="Get facilities by selected categories")
+def get_facilities_by_categories(
+    categories: str = Query(..., description="Comma-separated `public.poi.kategori` values"),
+    limit: int = Query(1000, ge=1, le=100000),
+    bbox: Optional[str] = Query(
+        None, description="Optional bbox as minx,miny,maxx,maxy (lon/lat, EPSG:4326)"
+    ),
+    code: Optional[str] = Query(
+        None, description="Optional comma-separated district codes (kdkec) to filter facilities"
+    ),
+):
+    # Parse inputs
+    category_list: List[str] = [c.strip() for c in categories.split(",") if c.strip()]
+    bbox_vals: Optional[List[float]] = None
+    if bbox:
+        try:
+            bbox_vals = [float(x) for x in bbox.split(",")]
+        except Exception:
+            # Service will also validate length; raise here for clearer message
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid bbox. Use minx,miny,maxx,maxy in lon/lat.")
 
-@router.get("/rumahsakit", response_model=list[RumahSakitItem])
-def get_rumahsakit(nmkec: List[str] = Query(..., description="List of kecamatan names")):
-    return get_rumahsakit_service(nmkec)
+    kdkec_list: Optional[List[str]] = None
+    if code:
+        kdkec_list = [k.strip() for k in code.split(",") if k.strip()]
+
+    return get_facilities_by_categories_service(
+        categories=category_list, limit=limit, bbox=bbox_vals, kdkec=kdkec_list
+    )
