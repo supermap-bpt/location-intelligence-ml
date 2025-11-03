@@ -1,6 +1,6 @@
 import logging
 from sqlalchemy import text
-from app.database import engine_dummy_bps
+from app.database import engine
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +10,7 @@ def delete_analysis_result(analysis_id: int) -> dict:
     Returns success message or error details.
     """
     try:
-        with engine_dummy_bps.connect() as conn:
+        with engine.connect() as conn:
             # First check if the record exists
             result = conn.execute(text("""
                 SELECT id FROM analysis_results WHERE id = :id
@@ -54,7 +54,7 @@ def delete_grid_score(grid_id: int) -> dict:
     Returns success message or error details.
     """
     try:
-        with engine_dummy_bps.connect() as conn:
+        with engine.connect() as conn:
             # First check if the record exists
             result = conn.execute(text("""
                 SELECT id FROM grid_scores WHERE id = :id

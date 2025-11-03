@@ -136,7 +136,7 @@ def _get_kecamatan_names(codes: List[str]) -> Dict[str, str]:
 
 
 # =========================
-# Facilities config (engine_dummy_bps)
+# Facilities config (engine)
 # =========================
 # Map each facility to (schema, table, geom_col, kec_name_col_in_poi)
 _FACILITY_TABLES = {
@@ -155,7 +155,7 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
     """
     Filter POI by *kecamatan name*:
       public.kecamatan.nama_kecamatan  (engine)
-        ↔ POI.{nmkec}                  (engine_dummy_bps)
+        ↔ POI.{nmkec}                  (engine)
 
     Returns a list of GeoJSON Feature dicts (NOT a FeatureCollection).
     """
@@ -197,7 +197,7 @@ def _fetch_facilities_in_kecamatan(codes: List[str], facility_key: Optional[str]
     if not nmkec_names:
         return []
 
-    # 2) Query POI by kecamatan name (on engine_dummy_bps)
+    # 2) Query POI by kecamatan name (on engine)
     # Use UPPER() on the POI side and compare with the pre-uppercased list
     sql = f"""
         SELECT
@@ -284,10 +284,10 @@ def _fetch_poi_by_categories(codes: List[str], categories: Optional[List[str]]) 
 
 def get_grid_score(grid_id: int, facility_key: Optional[str] = None, categories: Optional[List[str]] = None):
     """
-    Fetch a single grid score record (from engine_dummy_bps) and enrich response with:
+    Fetch a single grid score record (from engine) and enrich response with:
       - provinsi, kota/kabupaten, kecamatan (kode + nama)
       - kecamatan polygon FeatureCollection (from engine)
-      - optional facilities list (array of GeoJSON Features) filtered by kdkec (from engine_dummy_bps)
+      - optional facilities list (array of GeoJSON Features) filtered by kdkec (from engine)
       - optional POI/categories list (array of GeoJSON Features) filtered by kdkec and kategori
     """
     with engine.begin() as conn:

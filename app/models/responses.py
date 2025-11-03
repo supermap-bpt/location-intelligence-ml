@@ -53,8 +53,6 @@ class SuitabilityAnalysisResponse(BaseModel):
 class HealthCheckResponse(BaseModel):
     status: str
     timestamp: str
-    model_loaded: bool
-    dependencies: dict
 
 class Parameter(BaseModel):
     id: int

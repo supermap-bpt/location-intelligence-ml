@@ -7,7 +7,7 @@ from shapely.geometry import shape
 from sqlalchemy import text
 from functools import lru_cache
 from typing import Dict, Any
-from app.database import engine_dummy_bps
+from app.database import engine
 
 NUMERIC_TYPES = {"numeric", "double precision", "real", "integer", "bigint", "smallint"}
 
@@ -35,7 +35,7 @@ def build_layer_specs(schema: str = "public") -> Dict[str, Dict[str, Any]]:
       WHERE is_active = true
       ORDER BY id ASC
     '''
-    df = pd.read_sql_query(q, con=engine_dummy_bps)
+    df = pd.read_sql_query(q, con=engine)
 
     specs: Dict[str, Dict[str, Any]] = {}
     for _, r in df.iterrows():
@@ -51,7 +51,7 @@ def build_layer_specs(schema: str = "public") -> Dict[str, Dict[str, Any]]:
               FROM information_schema.columns
               WHERE table_schema = :schema AND table_name = :table
             """),
-            con=engine_dummy_bps,
+            con=engine,
             params={"schema": schema, "table": code},
         )
 
@@ -86,7 +86,7 @@ def geodf_for_code(code: str, schema: str = "public") -> gpd.GeoDataFrame:
               FROM "{schema}"."{table}"
               WHERE smgeometry IS NOT NULL
             '''
-            df = pd.read_sql_query(sql, con=engine_dummy_bps)
+            df = pd.read_sql_query(sql, con=engine)
             df["geometry"] = df["geojson"].apply(lambda x: shape(json.loads(x) if isinstance(x, str) else x))
             df = df.drop(columns=["geojson"])
             return gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")

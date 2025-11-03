@@ -1,5 +1,5 @@
 from sqlalchemy import text
-from app.database import engine, engine_dummy_bps
+from app.database import engine
 from typing import List
 
 # ==================

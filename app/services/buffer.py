@@ -1,7 +1,7 @@
 import json
 from shapely.geometry import shape, mapping
 from shapely.ops import unary_union
-from app.database import engine_dummy_bps
+from app.database import engine
 from sqlalchemy import text
 from app.models.requests import BufferRequest
 
@@ -45,7 +45,7 @@ def buffer_result_service(req: BufferRequest):
 
         # --- Step 6: Query lahan kosong dari DB ---
         lahan_kosong = []
-        with engine_dummy_bps.connect() as conn:
+        with engine.connect() as conn:
             query = text("""
                 SELECT smid, MAX(smuserid) as smuserid, ST_AsGeoJSON(MAX(smgeometry)) as geometry,
                        MAX(userid) as userid, MAX(namobj) as namobj, MAX(remark) as remark,
